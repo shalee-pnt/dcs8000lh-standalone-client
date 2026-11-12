@@ -1,0 +1,26 @@
+# Binaires / APK du vendeur (ne pas redistribuer, volumineux)
+*.apk
+
+# Captures réseau (contiennent handshakes TLS, tokens, trafic perso)
+*.pcap
+*.pcapng
+
+# Fichiers de sortie / logs / SDP / infos appareil (tokens, pin, etc.)
+*.log
+*.sdp
+device_info*.json
+*_out.txt
+*_session*.log
+
+# Config / mémoire locale de l'assistant
+.claude/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+.venv/
+
+# OS
+Thumbs.db
+.DS_Store
