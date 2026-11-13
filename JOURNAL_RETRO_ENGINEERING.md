@@ -263,7 +263,10 @@ def build_heartbeat(ptype):
 - STUN réel (`stun_get_mapped_address`) pour `conn_add_candidate` (même LAN
   donc pas strictement nécessaire mais inoffensif).
 - ffplay lancé avec flags basse latence (`-fflags nobuffer -flags low_delay
-  -framedrop -sync ext` + `setpts=0`) sinon ça bufferise/rame.
+  -framedrop -sync ext -max_delay 1000000`) sinon ça bufferise/rame. **NE PAS**
+  utiliser `setpts=0` : ça force PTS=0, provoque une dérive et un plantage de
+  l'affichage après ~2 min. `-max_delay 1s` évite d'attendre 5 s sur un paquet
+  SRTP perdu (sinon la file `vq` gonfle et ça saccade).
 - Les channels 0x20/0x21/0x22/0x23 = RTP vidéo / RTCP vidéo / RTP audio /
   RTCP audio (offset 0x20 sur la numérotation RTSP-interleaved standard
   0/1/2/3). Payload type RTP : 96=vidéo H264, 97=audio opus.
@@ -273,6 +276,56 @@ def build_heartbeat(ptype):
   Appelée depuis `0x5b644` avec type=`[ctx+0x114]`, tok1=`ctx+0x3c`
   (=client_token), tok2=`ctx+0x5d` (=device_token).
 - Le counter vient de `rand()` (PLT @ `0x54950`).
+
+## 4bis. Coupure à ~60 s — keepalive de CONNEXION — **RÉSOLU**
+
+**Symptôme :** une fois le direct lancé et fluide, il se coupait TOUJOURS au
+bout de ~60 s (≈ 2000 frames à 30 fps), très régulièrement. Le relais renvoyait
+alors un `rtsp_command` avec `code=1000` (« device unreachable ») : ce n'est pas
+nous qui perdions le relais, c'est la **liaison caméra↔relais qui expirait**.
+
+**Piste éliminée — timeout de session RTSP.** On a d'abord cru à un timeout RTSP
+et testé :
+1. remplacer le keepalive `OPTIONS` par `GET_PARAMETER` (la vraie méthode qui
+   réarme le minuteur de session RTSP — la caméra l'annonce dans son `Public:`) ;
+2. utiliser le bon `Session:` — la caméra **assigne son propre identifiant** de
+   session dans sa réponse au PLAY (ex. `C78A5B40`), on l'inventait au hasard ;
+   on le capture donc (`extract_rtsp_session`) et on le réutilise.
+
+→ `GET_PARAMETER` renvoyait bien `200 OK` avec le bon `Session:`, **mais la
+coupure survenait quand même pile à ~60 s.** Donc ce n'est PAS un timeout RTSP.
+(Les deux corrections sont conservées car correctes, mais non suffisantes.)
+
+**Cause racine — bail de connexion de ~60 s.** La liaison caméra↔relais
+(`conn_id`) a un bail d'environ 60 s qui doit être renouvelé par un keepalive de
+**niveau connexion**, distinct des heartbeats média.
+
+**Le paquet manquant (découvert par capture Frida native de l'app officielle) :**
+
+```
+24 FF 00 01 05     (5 octets)
+  24      marqueur
+  FF      canal de contrôle
+  00 01   longueur = 1
+  05      payload : 1 octet = 0x05
+```
+
+envoyé **toutes les ~16 s** vers l'endpoint média de la caméra. Notre client ne
+l'émettait pas (il n'envoyait que les heartbeats type 0/1). En l'ajoutant
+(toutes les 15 s dans `conn_keepalive_sender`), **le direct devient continu** —
+plus aucune coupure à 60 s.
+
+**Comment on l'a trouvé :** l'app officielle a été lancée via le gadget Frida
+(objection), et on a hooké **`sa_conn_data_send`** de `libsa.so` (pur natif,
+sans pont Java qui est indisponible dans ce gadget). Pendant une longue session
+de direct, l'app émettait ce paquet `24FF000105` à 20.9 s, 36.9 s, 52.9 s… (pas
+régulier de ~16 s) et **sa session survivait bien au-delà de 60 s**. Les
+heartbeats média 0x20–0x23 ont été ignorés dans le hook pour ne pas noyer le log.
+
+Autres fonctions natives utiles repérées dans `libsa.so` (exports) :
+`sa_ws_send_data` (émission WebSocket de signalisation), `sa_conn_data_send`
+(émission conn/contrôle), `sa_rtsp_on_recv_remote` / `sa_recv_command`
+(réception), `sa_conn_data_recv`, `sa_ws_connect`, `sa_conn_close`.
 
 ## 5. Solution de repli qui fonctionne à 100% : téléphone + Frida
 

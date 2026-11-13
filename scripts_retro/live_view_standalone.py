@@ -9,11 +9,12 @@ import getpass
 import hashlib
 import json
 import os
+import re
 import secrets
-import tempfile
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.parse
 
@@ -38,6 +39,17 @@ LOCAL_ADDR = os.environ.get("LOCAL_ADDR", "192.168.1.34")  # ton IP locale sur l
 LOCAL_PORT = 47000
 FFPLAY = os.environ.get("FFPLAY", "ffplay")  # ffplay doit etre dans le PATH, ou definir $FFPLAY
 SDP_PATH = os.path.join(tempfile.gettempdir(), "dcs8000lh.sdp")
+WS_DEBUG_LOG = os.path.join(tempfile.gettempdir(), "dcs8000lh_ws_debug.log")  # journal debug optionnel
+
+
+def wslog(line):
+    """Ajoute une ligne horodatee au fichier de debug WebSocket (pour analyser
+    les messages de re-offre de la camera sans noyer la console)."""
+    try:
+        with open(WS_DEBUG_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%H:%M:%S')} {line}\n")
+    except Exception:
+        pass
 
 VIDEO_RELAY_PORT = 49100
 AUDIO_RELAY_PORT = 49102
@@ -58,6 +70,13 @@ a=rtpmap:97 opus/16000
 
 def md5(s):
     return hashlib.md5(s.encode()).digest()
+
+
+def extract_rtsp_session(rtsp_msg):
+    """Recupere l'identifiant de session RTSP (en-tete 'Session:') assigne par
+    la camera, sans le ';timeout=...' eventuel."""
+    m = re.search(r"Session:\s*([^\r\n;]+)", rtsp_msg or "")
+    return m.group(1).strip() if m else None
 
 
 def stun_get_mapped_address(stun_host, stun_port, local_addr, local_port, timeout=3):
@@ -169,9 +188,9 @@ def cloud_login():
     }
 
 
-async def live_view(info, udp_video, udp_audio):
-    """Une session de visionnage. Retourne quand le flux se coupe (stall) ou
-    que la connexion tombe, pour permettre une renegociation par l'appelant."""
+async def live_view(info, udp_video, udp_audio, ffplay):
+    """Une session de visionnage. Retourne "stall" quand le flux se coupe, ou
+    "ffplay_closed" si la fenetre video a ete fermee (= quitter)."""
     import ssl
     seq = [1]
 
@@ -352,7 +371,24 @@ async def live_view(info, udp_video, udp_audio):
 
         ping_task = asyncio.create_task(ping_sender())
 
+        async def conn_keepalive_sender():
+            # Keepalive de CONNEXION observe dans l'app officielle (capture Frida
+            # de sa_conn_data_send) : paquet "24 FF 00 01 05" (canal 0xFF, long=1,
+            # payload 0x05) envoye toutes les ~16s. C'est LUI qui renouvelle le
+            # bail cote relais ; sans lui la session est coupee a ~60s (code 1000).
+            pkt = bytes([0x24, 0xFF, 0x00, 0x01, 0x05])
+            while True:
+                await asyncio.sleep(15)
+                if camera_media_addr["addr"]:
+                    transport.sendto(pkt, camera_media_addr["addr"])
+
+        conn_keepalive_task = asyncio.create_task(conn_keepalive_sender())
+
         session_id = secrets.token_hex(4).upper()
+        # La camera assigne SON PROPRE id de session dans sa reponse ; on le
+        # capturera et on l'utilisera pour les keepalives (sinon le minuteur de
+        # la vraie session n'est jamais rearme -> expiration a ~60s -> stall).
+        rtsp_session_id = [session_id]
         rtsp_play = {
             "device_id": info["mac"],
             "device_token": info["device_token"],
@@ -382,6 +418,10 @@ async def live_view(info, udp_video, udp_audio):
                 break
             if resp.get("command") == "rtsp_command":
                 print("PLAY response code:", resp.get("code"), file=sys.stderr)
+                sess = extract_rtsp_session(resp.get("rtsp_msg", ""))
+                if sess:
+                    rtsp_session_id[0] = sess
+                    print("Session RTSP (camera) =", sess, file=sys.stderr)
                 rtsp_ok = resp.get("code") == 0
                 break
 
@@ -390,7 +430,11 @@ async def live_view(info, udp_video, udp_audio):
 
         rtsp_cseq = [5]
 
-        async def send_rtsp_options():
+        async def send_rtsp_keepalive():
+            # GET_PARAMETER (et non OPTIONS) : c'est la methode qui REARME le
+            # minuteur de session RTSP de la camera. Avec OPTIONS la session
+            # expirait au bout de ~60s (code 1000) -> stall. L'en-tete Session
+            # est indispensable pour que le serveur sache quelle session renouveler.
             rtsp_cseq[0] += 1
             msg = {
                 "device_id": info["mac"],
@@ -400,10 +444,10 @@ async def live_view(info, udp_video, udp_audio):
                 "command": "rtsp_command",
                 "rtsp_id": 4,
                 "rtsp_msg": (
-                    "OPTIONS rtsp://127.0.0.1/live/profile.0 RTSP/1.0\r\n"
+                    "GET_PARAMETER rtsp://127.0.0.1/live/profile.0 RTSP/1.0\r\n"
                     f"CSeq: {rtsp_cseq[0]}\r\n"
                     "User-Agent: PythonStandalone\r\n"
-                    f"Session: {session_id}\r\n\r\n"
+                    f"Session: {rtsp_session_id[0]}\r\n\r\n"
                 ),
                 "sequence_id": next_seq(),
                 "timestamp": int(time.time()),
@@ -420,7 +464,7 @@ async def live_view(info, udp_video, udp_audio):
                         "sequence_id": next_seq(),
                         "timestamp": int(time.time()),
                     }))
-                    await send_rtsp_options()
+                    await send_rtsp_keepalive()
                 except Exception as e:
                     print("keepalive send failed:", e, file=sys.stderr)
                     return
@@ -433,68 +477,112 @@ async def live_view(info, udp_video, udp_audio):
                     return
                 try:
                     d = json.loads(msg)
-                    if d.get("command") not in ("keep_alive",):
-                        print("WS<<", str(d)[:150], file=sys.stderr)
+                    cmd = d.get("command")
+                    # Tient a jour l'id de session RTSP depuis les 200 OK de la camera.
+                    if cmd == "rtsp_command" and d.get("code") == 0:
+                        sess = extract_rtsp_session(d.get("rtsp_msg", ""))
+                        if sess and sess != rtsp_session_id[0]:
+                            rtsp_session_id[0] = sess
+                            print("Session RTSP (camera, maj) =", sess, file=sys.stderr)
+                    if cmd not in ("keep_alive",):
+                        # dump COMPLET pour analyser le message de re-offre de la camera
+                        line = f"WS<< [cmd={cmd} sa_cmd={d.get('sa_cmd')} code={d.get('code')}] {json.dumps(d)}"
+                        print(line[:160], file=sys.stderr)
+                        wslog(line)
                 except Exception:
                     pass
 
         keepalive_task = asyncio.create_task(keepalive_sender())
         drainer_task = asyncio.create_task(ws_drainer())
         try:
-            # Surveille le flux : si pas de video pendant 4s (apres un demarrage),
+            # Surveille le flux : si pas de video pendant 8s (apres un demarrage),
             # on considere la session coupee et on retourne pour renegocier.
+            # Si la fenetre ffplay a ete fermee par l'utilisateur -> on quitte.
             started = False
             while True:
                 await asyncio.sleep(0.5)
+                if ffplay.poll() is not None:
+                    return "ffplay_closed"
                 idle = loop.time() - last_video["t"]
                 if counts["video"] > 0:
                     started = True
-                if started and idle > 4.0:
+                if started and idle > 5.0:
                     print(">>> flux coupe (stall), renegociation...", file=sys.stderr)
-                    return
-                if not started and idle > 20.0:
-                    print(">>> aucun flux apres 20s, renegociation...", file=sys.stderr)
-                    return
+                    wslog(f">>> STALL apres {counts['video']} frames video (idle={idle:.1f}s)")
+                    return "stall"
+                if not started and idle > 10.0:
+                    print(">>> aucun flux apres 10s (camera encore occupee ?), renegociation...", file=sys.stderr)
+                    return "stall"
         finally:
             keepalive_task.cancel()
             drainer_task.cancel()
             ping_task.cancel()
+            conn_keepalive_task.cancel()
             transport.close()
+
+
+def launch_ffplay():
+    return subprocess.Popen([
+        FFPLAY,
+        "-fflags", "nobuffer",     # pas de buffering d'entree : latence mini
+        "-flags", "low_delay",     # decodage faible latence
+        "-framedrop",              # lache les images en retard au lieu d'empiler
+        "-protocol_whitelist", "file,udp,rtp",
+        "-probesize", "32768",
+        "-analyzeduration", "0",
+        "-max_delay", "1000000",   # 1s de tolerance de reordonnancement RTP : absorbe la gigue
+                                   # sans attendre 5s sur un paquet perdu (SRTP fail) -> pas de buffering
+        "-sync", "ext",            # lecture sur horloge externe = fluide en direct, sans derive
+        "-i", SDP_PATH,
+    ])
 
 
 def main():
     info = cloud_login()
 
-    # SDP + relais + ffplay lances UNE fois ; persistent a travers les renegociations.
+    # SDP + sockets relais crees UNE fois. ffplay est relance a CHAQUE session
+    # (une horloge neuve par session evite le flot de "dropping old packet" apres
+    # une renegociation, car le nouveau flux RTP repart sur une autre base de temps).
     with open(SDP_PATH, "w", newline="\r\n") as f:
         f.write(SDP_TEMPLATE.format(video_port=VIDEO_RELAY_PORT, audio_port=AUDIO_RELAY_PORT))
     udp_video = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-    print("Lancement de ffplay (fenetre persistante)...", file=sys.stderr)
-    ffplay = subprocess.Popen([
-        FFPLAY,
-        "-protocol_whitelist", "file,udp,rtp",
-        "-probesize", "32768",
-        "-analyzeduration", "0",
-        "-max_delay", "5000000",   # 5s de tolerance de reordonnancement RTP (absorbe les rafales)
-        "-sync", "ext",            # lecture sur horloge externe = fluide en direct, sans derive
-        "-i", SDP_PATH,
-    ])
-
+    print("Astuce : ferme la fenetre video (ou Ctrl+C) pour quitter.", file=sys.stderr)
     try:
-        while ffplay.poll() is None:   # tant que la fenetre ffplay est ouverte
+        while True:
+            ffplay = launch_ffplay()
+            t0 = time.time()
+            reason = None
             try:
-                asyncio.run(live_view(info, udp_video, udp_audio))
+                reason = asyncio.run(live_view(info, udp_video, udp_audio, ffplay))
             except KeyboardInterrupt:
-                break
+                reason = "ffplay_closed"
             except Exception as e:
-                print("session interrompue:", e, "-> reconnexion dans 1s", file=sys.stderr)
-            time.sleep(1)
-    finally:
-        if ffplay.poll() is None:
-            ffplay.terminate()
-        print("Fin.", file=sys.stderr)
+                print("session interrompue:", e, "-> reconnexion", file=sys.stderr)
+                reason = "stall"
+            finally:
+                if ffplay.poll() is None:
+                    ffplay.terminate()
+                    try:
+                        ffplay.wait(timeout=3)
+                    except Exception:
+                        ffplay.kill()
+            # Si ffplay meurt tres vite, c'est presque surement une course sur
+            # les ports UDP (l'ancien ffplay ne les a pas encore liberes), pas
+            # l'utilisateur qui ferme la fenetre -> on retente au lieu de quitter.
+            if reason == "ffplay_closed" and (time.time() - t0) < 4.0:
+                print(">>> ffplay n'a pas demarre (ports occupes ?), nouvelle tentative...", file=sys.stderr)
+                reason = "stall"
+            if reason == "ffplay_closed":
+                break
+            # 2s : laisse les ports UDP se liberer ET la camera relacher l'ancienne
+            # session (la DCS-8000LH ne gere qu'un seul live a la fois ; reconnecter
+            # trop vite donne une session muette).
+            time.sleep(2.0)
+    except KeyboardInterrupt:
+        pass
+    print("Fin.", file=sys.stderr)
 
 
 if __name__ == "__main__":
