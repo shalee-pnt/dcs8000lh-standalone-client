@@ -1,0 +1,16 @@
+{
+  "name": "Veille DCS-8000LH",
+  "short_name": "DCS-8000LH",
+  "description": "Vue en direct et détection de présence, calculées localement",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0e1116",
+  "theme_color": "#0e1116",
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512-maskable.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

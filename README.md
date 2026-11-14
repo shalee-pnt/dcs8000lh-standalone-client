@@ -39,7 +39,11 @@ sources) : voir [Installation](#installation) ci-dessous.
 - **[scripts_retro/dashboard_server.py](scripts_retro/dashboard_server.py)** +
   **[scripts_retro/dashboard.html](scripts_retro/dashboard.html)** — le
   dashboard web local (réutilise `live_view_standalone`, sert
-  `http://127.0.0.1:8099`). Voir [Dashboard](#dashboard-de-veille) ci-dessous.
+  `http://0.0.0.0:8099`, accessible depuis le réseau). Voir
+  [Dashboard](#dashboard-de-veille) et
+  [Accès téléphone](#accès-depuis-le-téléphone-pwa) ci-dessous.
+- **scripts_retro/manifest.json**, **scripts_retro/icons/** — manifeste et
+  icônes PWA (installation sur téléphone en « Ajouter à l'écran d'accueil »).
 - **scripts_retro/mydlink_check.py** — login cloud + liste/détails des appareils.
 - **scripts_retro/libsa_analysis/** — outils de désassemblage ARM64 (capstone +
   pyelftools) utilisés pour analyser `libsa.so`.
@@ -90,7 +94,10 @@ interactive pour le client autonome en ligne de commande. L'IP locale
 détection choisit la mauvaise interface réseau (plusieurs cartes réseau
 actives, VPN, etc.). Variables disponibles : `LOCAL_ADDR`, `FFPLAY` (chemin
 de `ffplay`), `FFMPEG` (chemin de `ffmpeg`, sinon déduit de `FFPLAY` ou
-cherché dans le `PATH`).
+cherché dans le `PATH`), `DASHBOARD_HOST` (dashboard uniquement : interface
+d'écoute du serveur web, `0.0.0.0` par défaut — accessible depuis le réseau ;
+mettre `127.0.0.1` pour désactiver tout accès réseau et rester strictement
+local à cette machine).
 
 ### Lancer le dashboard
 
@@ -152,6 +159,56 @@ vers `start_dashboard.bat` et le placer dans le dossier Démarrage
 si personne n'est connecté), utiliser le Planificateur de tâches Windows
 avec un déclencheur « au démarrage de l'ordinateur ».
 
+## Accès depuis le téléphone (PWA)
+
+Le dashboard est une page web : sur un téléphone, on l'installe comme une
+app via « Ajouter à l'écran d'accueil » (icône plein écran, sans barre de
+navigateur, comme une vraie app — fonctionne sur Android **et** iPhone).
+
+Par défaut le serveur écoute sur toutes les interfaces (`0.0.0.0`), donc
+il est déjà joignable par d'autres appareils sur le même réseau. Le
+terminal affiche l'adresse à utiliser au démarrage (`Depuis un autre
+appareil : http://<IP>:8099`).
+
+### Accès sur le WiFi domestique
+
+1. Vérifier que le téléphone est sur le **même réseau WiFi** que le PC.
+2. Ouvrir `http://<IP-du-PC>:8099` dans le navigateur du téléphone (l'IP
+   exacte est affichée au démarrage du dashboard).
+3. **Android (Chrome)** : menu ⋮ → « Ajouter à l'écran d'accueil ».
+   **iPhone (Safari)** : bouton Partager → « Sur l'écran d'accueil ».
+
+### Accès aussi en dehors du domicile (Tailscale)
+
+Pour y accéder hors du WiFi (4G, autre réseau) sans ouvrir de port sur
+internet ni gérer de certificat HTTPS, le plus simple est un VPN privé type
+[Tailscale](https://tailscale.com) (gratuit pour un usage personnel) :
+
+1. Installer Tailscale sur le PC qui fait tourner le dashboard, et se
+   connecter avec un compte (Google/Microsoft/GitHub/email).
+2. Installer l'app Tailscale sur le téléphone, se connecter avec le **même
+   compte**.
+3. Les deux appareils rejoignent le même réseau privé (« tailnet ») et
+   obtiennent chacun une adresse stable (`100.x.y.z`) ou un nom
+   (`<machine>.<tailnet>.ts.net`, visible dans l'admin Tailscale ou l'app).
+4. Sur le téléphone, ouvrir `http://<adresse-tailscale-du-pc>:8099` —
+   fonctionne alors de n'importe où avec une connexion internet — puis
+   « Ajouter à l'écran d'accueil » comme ci-dessus.
+
+Le trafic passe par un tunnel chiffré (WireGuard) entre les appareils du
+tailnet ; rien n'est exposé publiquement sur internet.
+
+### À savoir côté sécurité
+
+Une fois le dashboard connecté une première fois (identifiants mydlink),
+le flux vidéo/audio et les réglages sont accessibles à **tout appareil qui
+atteint cette adresse** — que ce soit via le WiFi domestique ou le tailnet
+Tailscale — sans contrôle d'accès supplémentaire par appareil (seul le
+réseau lui-même fait barrière : WiFi de confiance, ou appartenance au
+tailnet). C'est un choix délibéré pour rester simple ; pour un contrôle
+plus fin, restreindre l'accès au niveau du réseau (ACL Tailscale, SSID
+invité séparé, etc.) plutôt que dans l'application.
+
 ## Dépannage
 
 - **`[ERREUR] Python introuvable`** (lanceur `.bat`) : installer Python 3.10+
@@ -167,6 +224,15 @@ avec un déclencheur « au démarrage de l'ordinateur ».
 - **`ffplay`/`ffmpeg` introuvable** : installer FFmpeg et l'ajouter au `PATH`,
   ou définir les variables d'environnement `FFPLAY`/`FFMPEG` avec le chemin
   complet des exécutables.
+- **Le téléphone n'arrive pas à joindre `http://<IP>:8099`** (page
+  inaccessible, timeout) : le **pare-feu Windows bloque par défaut les
+  connexions entrantes**. À la première tentative depuis un autre appareil,
+  Windows propose normalement une boîte de dialogue pour autoriser Python
+  (ou l'exe) sur les réseaux privés — l'accepter. Si elle n'apparaît pas :
+  Pare-feu Windows Defender → Paramètres avancés → Règles de trafic entrant
+  → autoriser le port `8099` (TCP) sur le profil « Privé ». Vérifier aussi
+  que `DASHBOARD_HOST` n'a pas été mis à `127.0.0.1` (ça désactive l'accès
+  réseau volontairement).
 - **`ECHEC CONNEXION (identifiants incorrects ?)`** : vérifier
   `camera_config.json` (ou `MYDLINK_EMAIL`/`MYDLINK_PASSWORD`) — ce sont bien
   les identifiants du compte **mydlink** (l'app), pas ceux du WiFi.

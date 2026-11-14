@@ -561,6 +561,67 @@ de texte.
   mêmes identifiants ; `POST /api/auth` avec un mauvais mot de passe →
   `401` avec message clair, serveur et flux existant intacts.
 
+## 6quater. Accès téléphone — PWA + Tailscale (plutôt qu'un .apk natif)
+
+Besoin : une icône sur l'écran d'accueil du téléphone pour le dashboard.
+Deux options évaluées : vrai `.apk` natif (WebView wrapper, à construire à
+la main avec `aapt2`/`d8`/`apksigner` puisqu'aucun Gradle/Android Studio
+n'est disponible ici) vs **PWA** (page web existante + manifeste, zéro
+build). Choisi : PWA — elle marche aussi sur iPhone (un `.apk` est
+Android-only), se met à jour automatiquement avec le serveur (pas de
+réinstallation), et ne demande aucune chaîne de build supplémentaire à
+maintenir. Un vrai `.apk` reste possible plus tard si besoin (webview
+wrapper simple autour de la même page).
+
+**Prérequis découvert en le faisant : le serveur n'écoutait que sur
+`127.0.0.1`** — même un téléphone sur le même WiFi ne pouvait pas
+l'atteindre. `HTTP_HOST` passe à `0.0.0.0` par défaut (reglable via
+`$DASHBOARD_HOST`), ce qui rend le serveur joignable depuis n'importe quel
+appareil qui atteint cette IP (réseau local, ou réseau privé Tailscale —
+les deux passent par la même interface réseau système, donc un seul
+changement couvre les deux cas).
+
+**Portée réseau — accès aussi hors du domicile :** plutôt qu'ouvrir un port
+sur la box (exposerait un service HTTP sans TLS directement sur internet),
+solution retenue : VPN privé **Tailscale** (WireGuard). Aucune
+configuration côté app necessaire une fois le tunnel etabli — le téléphone
+et le PC se voient comme s'ils étaient sur le même réseau local, où qu'ils
+soient physiquement. Entièrement côté infrastructure (installation
+Tailscale sur les deux appareils, connexion au même compte), rien dans le
+code de ce dépôt n'en dépend.
+
+**Choix de sécurité délibéré (décision utilisateur) :** pas de code d'accès
+supplémentaire au niveau applicatif — le réseau lui-même (WiFi de
+confiance, ou appartenance au tailnet Tailscale) fait office de barrière.
+Une fois le dashboard authentifié une première fois côté mydlink, le flux
+et les réglages sont ouverts à quiconque atteint l'adresse, sans
+distinction par appareil (pas de session/cookie par client sur les routes
+de visionnage). Acceptable pour un usage familial sur un réseau de
+confiance ; à documenter clairement si jamais le modèle de menace change
+(invités sur le même WiFi, tailnet partagé largement, etc.).
+
+**Implémentation PWA :**
+- `manifest.json` (nom, icônes, `display: "standalone"`, couleurs de thème)
+  servi par le serveur, référencé via `<link rel="manifest">`.
+- Icônes générées avec Pillow (`gen_icons.py`, scratchpad, non conservé) :
+  192/512 px "any" + 512 px "maskable" (zone de sécurité centrale pour les
+  icônes adaptatives Android) + 180 px `apple-touch-icon`. Pictogramme
+  simple : caméra + voyant rouge "live", sur fond teal (couleur d'accent du
+  dashboard).
+- Meta tags iOS (`apple-mobile-web-app-capable`, `apple-touch-icon`, etc.)
+  en plus du manifeste standard, Safari ne lisant pas toujours bien
+  `display: standalone` seul.
+- `viewport-fit=cover` + paddings `env(safe-area-inset-*)` (haut/droite/
+  bas/gauche) sur `body` et l'overlay de connexion, pour bien s'afficher
+  sous l'encoche/la barre d'accueil en mode standalone (sans barre de
+  navigateur, ces zones ne sont plus gérées par le navigateur).
+- Pas de service worker : aucun intérêt hors-ligne réel ici (la page a
+  besoin du réseau de toute façon pour le flux), et ça évite les pièges de
+  cache obsolète pour un gain nul.
+- Testé : page servie correctement sur l'IP LAN de la machine (pas
+  seulement `127.0.0.1`), `manifest.json` et les icônes servis avec les
+  bons `Content-Type` (`application/json` / `image/png`).
+
 ## 7. Détails techniques divers utiles
 
 - Format `device_token` cloud : `<MAC>-<uuid-like-32-hex-avec-tirets>` (ex.

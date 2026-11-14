@@ -29,7 +29,11 @@ from aiohttp import web
 import live_view_standalone as lv
 
 # ---- Reglages ----
-HTTP_HOST = "127.0.0.1"
+# "0.0.0.0" = ecoute sur toutes les interfaces (reseau local, et le reseau
+# prive Tailscale le cas echeant), pas seulement cette machine. A restreindre
+# a "127.0.0.1" via $DASHBOARD_HOST si tu ne veux JAMAIS y acceder depuis un
+# autre appareil (telephone, autre PC...).
+HTTP_HOST = os.environ.get("DASHBOARD_HOST", "0.0.0.0")
 HTTP_PORT = 8099
 MJPEG_W, MJPEG_H = 960, 540      # resolution servie au navigateur
 MJPEG_FPS = 20
@@ -738,7 +742,12 @@ async def cleanup_background(app):
 
 
 def main():
-    print(f"\nTableau de bord : http://{HTTP_HOST}:{HTTP_PORT}\n", file=sys.stderr)
+    print(f"\nTableau de bord (cette machine) : http://127.0.0.1:{HTTP_PORT}", file=sys.stderr)
+    if HTTP_HOST == "0.0.0.0":
+        print(f"Depuis un autre appareil (meme reseau, ou Tailscale) : "
+              f"http://{lv.LOCAL_ADDR}:{HTTP_PORT}\n", file=sys.stderr)
+    else:
+        print("", file=sys.stderr)
     app = web.Application()
     app.router.add_get("/", h_index)
     app.router.add_get("/api/state", h_state)
@@ -752,6 +761,10 @@ def main():
     app.router.add_post("/api/settings", h_post_settings)
     os.makedirs(CAPTURES_DIR, exist_ok=True)
     app.router.add_static("/captures/", CAPTURES_DIR, show_index=False)
+    # PWA : manifeste + icones, pour "Ajouter a l'ecran d'accueil" sur telephone.
+    app.router.add_get("/manifest.json",
+                        lambda r: web.FileResponse(os.path.join(HERE, "manifest.json")))
+    app.router.add_static("/icons/", os.path.join(HERE, "icons"), show_index=False)
     app.on_startup.append(start_background)
     app.on_cleanup.append(cleanup_background)
     web.run_app(app, host=HTTP_HOST, port=HTTP_PORT, print=None)

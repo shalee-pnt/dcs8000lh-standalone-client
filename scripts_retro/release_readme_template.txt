@@ -25,6 +25,18 @@ DEMARRAGE RAPIDE
 
 Pour arrêter : fermer la fenêtre de la console, ou Ctrl+C dedans.
 
+INSTALLER SUR TELEPHONE (PWA)
+-------------------------------
+Le dashboard est accessible depuis un téléphone sur le même réseau WiFi :
+l'adresse à utiliser ("http://<IP>:8099") s'affiche dans la console au
+démarrage. L'ouvrir dans le navigateur du téléphone, puis "Ajouter à
+l'écran d'accueil" (Android : menu ⋮ dans Chrome ; iPhone : bouton
+Partager dans Safari) pour une icône plein écran, comme une vraie app.
+
+Pour y accéder aussi hors du domicile, voir la section "Accès depuis le
+téléphone (PWA)" du README du dépôt (lien plus bas) — ça passe par un VPN
+privé (Tailscale), pas par une ouverture de port sur internet.
+
 DEPANNAGE
 ---------
 - L'écran de connexion réaffiche une erreur : vérifier l'email et le mot
@@ -35,6 +47,12 @@ DEPANNAGE
 - Pare-feu Windows : à la première ouverture, autoriser l'accès réseau
   si Windows le demande (nécessaire pour recevoir le flux de la caméra
   et servir la page web locale).
+- Le téléphone n'arrive pas à joindre l'adresse affichée : c'est
+  généralement le pare-feu Windows qui bloque les connexions entrantes
+  d'autres appareils — accepter la boîte de dialogue Windows la première
+  fois, ou l'autoriser à la main (Pare-feu Windows Defender → Paramètres
+  avancés → Règles de trafic entrant → autoriser le port 8099 TCP, profil
+  Privé).
 
 A PROPOS DE CE PAQUET
 ----------------------
