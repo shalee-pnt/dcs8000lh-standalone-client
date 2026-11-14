@@ -165,11 +165,22 @@ def stun_get_mapped_address(stun_host, stun_port, local_addr, local_port, timeou
     return mapped_ip, mapped_port
 
 
-def load_credentials():
+class LoginError(Exception):
+    """Echec de connexion cloud (identifiants invalides, reseau indisponible
+    apres toutes les tentatives, reponse API inattendue...). Remplace les
+    anciens sys.exit(1) : a charge de l'appelant de decider quoi faire
+    (afficher un message et quitter en CLI, ou re-proposer un formulaire de
+    connexion dans le dashboard sans tuer le serveur)."""
+    pass
+
+
+def load_credentials(interactive=True):
     """Identifiants mydlink, dans cet ordre de priorite :
     1) variables d'environnement MYDLINK_EMAIL / MYDLINK_PASSWORD
     2) fichier camera_config.json a cote du script (voir camera_config.example.json)
-    3) saisie interactive (email en clair, mot de passe masque, jamais ecrit nulle part)
+    3) saisie interactive (email en clair, mot de passe masque, jamais ecrit nulle part),
+       seulement si interactive=True (sinon renvoie (None, None) : utile pour un
+       service sans terminal, qui proposera sa propre interface de connexion).
     """
     env_email = os.environ.get("MYDLINK_EMAIL")
     env_pw = os.environ.get("MYDLINK_PASSWORD")
@@ -183,10 +194,13 @@ def load_credentials():
             email, password = cfg.get("email"), cfg.get("password")
             if email and password:
                 return email, password
-            print("camera_config.json trouve mais incomplet (email/password manquant), "
-                  "saisie interactive...", file=sys.stderr)
+            print("camera_config.json trouve mais incomplet (email/password manquant).",
+                  file=sys.stderr)
         except Exception as e:
-            print(f"camera_config.json illisible ({e}), saisie interactive...", file=sys.stderr)
+            print(f"camera_config.json illisible ({e}).", file=sys.stderr)
+
+    if not interactive:
+        return None, None
 
     print("Email du compte mydlink : ", end="", file=sys.stderr, flush=True)
     email = input().strip()
@@ -208,15 +222,20 @@ def _request_with_retry(method, url, max_retries=5, **kwargs):
             return method(url, **kwargs)
         except requests.exceptions.RequestException as e:
             if attempt == max_retries:
-                print(f"ECHEC reseau apres {max_retries} tentatives ({url}): {e}", file=sys.stderr)
-                sys.exit(1)
+                raise LoginError(f"Echec reseau apres {max_retries} tentatives ({url}): {e}")
             print(f"Erreur reseau ({e}), nouvelle tentative dans {delay}s...", file=sys.stderr)
             time.sleep(delay)
             delay = min(delay * 2, 60)
 
 
-def cloud_login():
-    email, password = load_credentials()
+def cloud_login(email=None, password=None):
+    """Connexion cloud mydlink. Si email/password ne sont pas fournis
+    explicitement (cas du dashboard, qui gere sa propre source
+    d'identifiants), ils sont charges via load_credentials() -- y compris
+    la saisie interactive si lancee en CLI. Leve LoginError en cas d'echec
+    (ne quitte jamais le process elle-meme)."""
+    if not email or not password:
+        email, password = load_credentials()
     pw_hash = hashlib.md5(password.encode()).hexdigest()
 
     qs = (
@@ -241,8 +260,7 @@ def cloud_login():
             params = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)
 
     if not params or "access_token" not in params:
-        print("ECHEC CONNEXION (identifiants incorrects ?) :", r.text[:500], file=sys.stderr)
-        sys.exit(1)
+        raise LoginError(f"Identifiants incorrects ou compte invalide : {r.text[:300]}")
 
     access_token = params["access_token"][0]
     api_site = params["api_site"][0]
@@ -252,8 +270,7 @@ def cloud_login():
     r2 = _request_with_retry(requests.get, device_list_url)
     devices = r2.json().get("data", [])
     if not devices:
-        print("Aucun appareil trouve", file=sys.stderr)
-        sys.exit(1)
+        raise LoginError("Aucun appareil associe a ce compte mydlink.")
     dev = devices[0]
     mac = dev["mac"]
     mydlink_id = dev["mydlink_id"]
@@ -273,9 +290,8 @@ def cloud_login():
             "dcd_url": detail["DCD"],
         }
     except KeyError as e:
-        print(f"Reponse de l'API incomplete (champ manquant: {e}). "
-              f"L'appareil est-il bien associe a ce compte ?", file=sys.stderr)
-        sys.exit(1)
+        raise LoginError(f"Reponse de l'API incomplete (champ manquant: {e}). "
+                          f"L'appareil est-il bien associe a ce compte ?")
 
 
 async def live_view(info, udp_video, udp_audio, ffplay):
@@ -628,7 +644,11 @@ def launch_ffplay():
 
 
 def main():
-    info = cloud_login()
+    try:
+        info = cloud_login()
+    except LoginError as e:
+        print("ECHEC DE CONNEXION:", e, file=sys.stderr)
+        sys.exit(1)
 
     # SDP + sockets relais crees UNE fois. ffplay est relance a CHAQUE session
     # (une horloge neuve par session evite le flot de "dropping old packet" apres

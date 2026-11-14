@@ -517,6 +517,50 @@ distribué via les Releases GitHub du dépôt, pas via git.
   de release compressé. Licence FFmpeg (GPL, build gyan.dev) copiée dans le
   zip (`FFMPEG_LICENSE.txt`) avec un lien vers les sources correspondantes.
 
+### Connexion via un écran web (au lieu d'éditer camera_config.json à la main)
+
+Le dashboard affiche un formulaire de connexion (email/mot de passe) quand
+aucun identifiant n'est trouvé au démarrage, au lieu d'obliger à éditer
+`camera_config.json` à la main — utile surtout pour la version `.exe`
+tout-en-un, où l'utilisateur n'a pas forcément de raison d'ouvrir un éditeur
+de texte.
+
+- **Refactor préalable obligatoire :** `cloud_login()` faisait `sys.exit(1)`
+  sur chaque échec (mauvais identifiants, réseau épuisé, réponse API
+  incomplète) — correct pour un script CLI, mais **tuerait tout le serveur**
+  si quelqu'un se trompe de mot de passe dans le formulaire web. Remplacé
+  par une exception dédiée `LoginError` (jamais levée par un `sys.exit`),
+  à charge de l'appelant de décider : `live_view_standalone.main()` (CLI)
+  l'attrape et sort proprement, `dashboard_server._login_and_start()`
+  l'attrape et renvoie une erreur HTTP 401 avec message, sans rien casser.
+- `load_credentials(interactive=True)` : nouveau paramètre — `False` pour le
+  dashboard (jamais de prompt bloquant sur un `input()` sans terminal/stdin),
+  `True` (par défaut, comportement inchangé) pour le client CLI.
+- `camera_loop()` (rafraîchissement de session après 3 échecs d'affilée,
+  voir plus haut) appelle maintenant `cloud_login(state.email, state.password)`
+  avec les identifiants explicitement mémorisés lors de la connexion réussie,
+  au lieu de `cloud_login()` sans arguments — qui aurait réessayé
+  `load_credentials()` en mode interactif par défaut et **bloqué indéfiniment
+  sur un `input()` sans stdin** si jamais les identifiants mémorisés
+  devenaient invalides entre-temps (bug latent, jamais déclenché en
+  pratique, corrigé au passage).
+- **Bug trouvé en testant** (reproduit volontairement : soumettre un mauvais
+  mot de passe pendant qu'une session valide tourne déjà) : la tentative
+  ratée repassait `state.authenticated` à `False` et le statut à
+  `attente_identifiants`, alors que la session déjà active continuait de
+  streamer sans interruption réelle — le dashboard affichait donc un faux
+  signal de déconnexion. Corrigé : `_login_and_start()` ne touche
+  `state.authenticated`/le statut affiché que si aucune session n'est
+  **déjà** active (`already_running = state.authenticated`, vérifié avant
+  toute tentative) ; une tentative ratée n'affecte alors que le message
+  d'erreur retourné à CETTE requête, jamais l'état global affiché.
+- Testé de bout en bout via de vraies requêtes HTTP (pas juste dans le
+  navigateur) : `GET /api/auth` sans config → `{"authenticated": false}`,
+  `POST /api/auth` avec les vrais identifiants + `remember:true` → connexion
+  réussie, flux démarré, `camera_config.json` réécrit avec exactement les
+  mêmes identifiants ; `POST /api/auth` avec un mauvais mot de passe →
+  `401` avec message clair, serveur et flux existant intacts.
+
 ## 7. Détails techniques divers utiles
 
 - Format `device_token` cloud : `<MAC>-<uuid-like-32-hex-avec-tirets>` (ex.

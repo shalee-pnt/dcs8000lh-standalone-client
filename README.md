@@ -66,8 +66,14 @@ venv\Scripts\activate          # (Linux/macOS : source venv/bin/activate)
 pip install -r requirements.txt
 ```
 
-Identifiants mydlink — pour ne pas les retaper à chaque lancement, copier le
-modèle et le compléter (fichier **non suivi par git**, reste en local) :
+**Identifiants mydlink** — le dashboard affiche un écran de connexion
+(email + mot de passe) dès qu'il démarre sans identifiants connus. Les
+renseigner une fois là, cocher « Se souvenir sur cet appareil », et c'est
+fait : le dashboard écrit lui-même `camera_config.json` pour les lancements
+suivants — pas besoin d'éditer de fichier à la main.
+
+Pour les régler autrement (avant le premier lancement, en ligne de
+commande, etc.), même fichier, copié et édité directement :
 
 ```
 cd scripts_retro
@@ -76,8 +82,10 @@ copy camera_config.example.json camera_config.json
 ```
 
 Ordre de priorité des identifiants : variables d'environnement
-`MYDLINK_EMAIL`/`MYDLINK_PASSWORD` → `camera_config.json` → saisie
-interactive si aucun des deux n'est présent. L'IP locale (`LOCAL_ADDR`) est
+`MYDLINK_EMAIL`/`MYDLINK_PASSWORD` → `camera_config.json` (à la main ou
+écrit par l'écran de connexion) → formulaire web du dashboard, ou saisie
+interactive pour le client autonome en ligne de commande. L'IP locale
+(`LOCAL_ADDR`) est
 **auto-détectée** ; la définir en variable d'environnement seulement si la
 détection choisit la mauvaise interface réseau (plusieurs cartes réseau
 actives, VPN, etc.). Variables disponibles : `LOCAL_ADDR`, `FFPLAY` (chemin

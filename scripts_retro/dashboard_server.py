@@ -246,6 +246,10 @@ class State:
         self.loop = None
         self.sse_queues = set()          # manipule uniquement dans le thread de la loop
         self.audio_queues = set()        # clients /audio.mp3 (thread loop)
+        self.authenticated = False
+        self.auth_error = None           # dernier message d'erreur de connexion (ou None)
+        self.email = None                # identifiants courants, pour le rafraichissement
+        self.password = None             # automatique de session dans camera_loop()
 
 state = State()
 
@@ -447,6 +451,50 @@ def dispatch_audio(chunk):
 
 # ---------------- Boucle camera (asyncio, reutilise live_view) ----------------
 
+async def _login_and_start(app, email, password, remember):
+    """Tente une connexion cloud avec ces identifiants (executee hors du
+    thread de l'event loop pour ne pas le bloquer) ; si ca marche, (re)demarre
+    la boucle camera. Retourne True/False, ne leve jamais. N'affecte le statut
+    "authentifie"/l'etat affiche QUE s'il n'y a pas deja une session active
+    (un essai rate ne doit jamais faire croire que le flux en cours a coupe)."""
+    already_running = state.authenticated
+    if not already_running:
+        set_status("connexion")
+    loop = asyncio.get_event_loop()
+    try:
+        info = await loop.run_in_executor(None, lambda: lv.cloud_login(email, password))
+    except lv.LoginError as e:
+        state.auth_error = str(e)
+        if not already_running:
+            state.authenticated = False
+            set_status("attente_identifiants")
+        return False
+    except Exception as e:
+        state.auth_error = f"Erreur inattendue : {e}"
+        if not already_running:
+            state.authenticated = False
+            set_status("attente_identifiants")
+        return False
+
+    state.authenticated = True
+    state.auth_error = None
+    state.email, state.password = email, password
+
+    if remember:
+        try:
+            with open(lv.CONFIG_PATH, "w", encoding="utf-8") as f:
+                json.dump({"email": email, "password": password}, f, indent=2)
+            print("Identifiants enregistres dans", lv.CONFIG_PATH, file=sys.stderr)
+        except Exception as e:
+            print("impossible d'enregistrer camera_config.json:", e, file=sys.stderr)
+
+    old_task = app.get("cam_task")
+    if old_task and not old_task.done():
+        old_task.cancel()
+    app["cam_task"] = asyncio.create_task(camera_loop(info, app["udp_video"], app["udp_audio"]))
+    return True
+
+
 async def camera_loop(info, udp_video, udp_audio):
     consecutive_fails = 0   # erreurs d'affilee (hors stall/renegociation normale)
     while True:
@@ -485,11 +533,13 @@ async def camera_loop(info, udp_video, udp_audio):
                 print(f"{consecutive_fails} echecs d'affilee, rafraichissement de la session cloud...",
                       file=sys.stderr)
                 try:
-                    info = lv.cloud_login()
-                except SystemExit:
-                    raise
-                except Exception as e:
+                    # Identifiants explicites (jamais de saisie interactive : ce
+                    # service tourne sans terminal attache).
+                    info = lv.cloud_login(state.email, state.password)
+                except lv.LoginError as e:
                     print("rafraichissement de session echoue:", e, file=sys.stderr)
+                except Exception as e:
+                    print("rafraichissement de session echoue (inattendu):", e, file=sys.stderr)
 
         set_status("reconnexion")
         await asyncio.sleep(backoff)   # laisse la camera liberer l'ancienne session
@@ -505,6 +555,7 @@ async def h_index(request):
 async def h_state(request):
     return web.json_response({
         "status": state.status,
+        "authenticated": state.authenticated,
         "motion_active": state.motion_active,
         "motion_level": round(state.motion_level, 4),
         "is_night": state.is_night,
@@ -557,6 +608,29 @@ async def h_audio(request):
     finally:
         state.audio_queues.discard(q)
     return resp
+
+
+async def h_get_auth(request):
+    return web.json_response({
+        "authenticated": state.authenticated,
+        "error": state.auth_error,
+    })
+
+
+async def h_post_auth(request):
+    try:
+        body = await request.json()
+    except Exception:
+        return web.json_response({"error": "JSON invalide"}, status=400)
+    email = (body.get("email") or "").strip()
+    password = body.get("password") or ""
+    remember = bool(body.get("remember", True))
+    if not email or not password:
+        return web.json_response({"error": "Email et mot de passe requis"}, status=400)
+    ok = await _login_and_start(request.app, email, password, remember)
+    if ok:
+        return web.json_response({"authenticated": True})
+    return web.json_response({"authenticated": False, "error": state.auth_error}, status=401)
 
 
 async def h_get_settings(request):
@@ -630,7 +704,6 @@ def _sse(obj):
 
 async def start_background(app):
     state.loop = asyncio.get_event_loop()
-    info = app["info"]
     # SDP complet puis scinde en video-seul / audio-seul (deux ffmpeg -> deux ports).
     full = lv.SDP_TEMPLATE.format(video_port=lv.VIDEO_RELAY_PORT,
                                   audio_port=lv.AUDIO_RELAY_PORT)
@@ -641,9 +714,21 @@ async def start_background(app):
         f.write(head + vid)
     with open(AUDIO_SDP_PATH, "w", newline="\r\n") as f:
         f.write(head + aud)
-    udp_video = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_audio = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    app["cam_task"] = asyncio.create_task(camera_loop(info, udp_video, udp_audio))
+    app["udp_video"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    app["udp_audio"] = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    app["cam_task"] = None
+
+    # Identifiants deja connus (variables d'environnement ou camera_config.json) :
+    # connexion silencieuse, sans passer par le formulaire web. Sinon, le
+    # dashboard demarre quand meme et affiche un formulaire de connexion.
+    email, password = lv.load_credentials(interactive=False)
+    if email and password:
+        ok = await _login_and_start(app, email, password, remember=False)
+        if not ok:
+            print("Identifiants enregistres invalides -> formulaire de connexion affiche.",
+                  file=sys.stderr)
+    else:
+        set_status("attente_identifiants")
 
 
 async def cleanup_background(app):
@@ -653,12 +738,12 @@ async def cleanup_background(app):
 
 
 def main():
-    info = lv.cloud_login()
     print(f"\nTableau de bord : http://{HTTP_HOST}:{HTTP_PORT}\n", file=sys.stderr)
     app = web.Application()
-    app["info"] = info
     app.router.add_get("/", h_index)
     app.router.add_get("/api/state", h_state)
+    app.router.add_get("/api/auth", h_get_auth)
+    app.router.add_post("/api/auth", h_post_auth)
     app.router.add_get("/stream.mjpeg", h_mjpeg)
     app.router.add_get("/audio.pcm", h_audio)
     app.router.add_get("/events", h_events)

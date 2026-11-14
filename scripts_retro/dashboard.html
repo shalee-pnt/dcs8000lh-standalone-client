@@ -134,10 +134,57 @@
     display:none;align-items:center;justify-content:center;z-index:50;padding:24px;cursor:zoom-out}
   .lightbox.open{display:flex}
   .lightbox img{max-width:100%;max-height:100%;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+
+  /* ---- Ecran de connexion ---- */
+  .login-overlay{position:fixed;inset:0;z-index:60;display:none;align-items:center;justify-content:center;
+    background:var(--bg);padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right))
+      24px max(16px,env(safe-area-inset-left))}
+  .login-overlay.open{display:flex}
+  .login-card{width:100%;max-width:380px;background:var(--panel);border:1px solid var(--line);
+    border-radius:var(--radius);padding:28px 26px}
+  .login-card h2{font-size:1.15rem;margin-bottom:4px}
+  .login-card .sub{color:var(--muted);font-size:.84rem;margin-bottom:20px;line-height:1.5}
+  .field-label{display:block;font-size:.78rem;font-weight:600;color:var(--muted);margin-bottom:6px}
+  .text-input{width:100%;padding:10px 12px;border-radius:9px;border:1px solid var(--line);
+    background:var(--panel-2);color:var(--fg);font-size:.92rem;font-family:inherit}
+  .text-input:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .login-card .field{margin-top:0}
+  .login-card .field+.field{margin-top:14px}
+  .checkrow{display:flex;align-items:center;gap:8px;margin-top:16px;font-size:.84rem;color:var(--muted)}
+  .checkrow input{accent-color:var(--accent);width:16px;height:16px}
+  .login-error{display:none;margin-top:14px;padding:10px 12px;border-radius:9px;font-size:.82rem;
+    background:color-mix(in srgb,var(--alert) 14%,transparent);
+    border:1px solid color-mix(in srgb,var(--alert) 40%,transparent);color:var(--alert)}
+  .login-error.show{display:block}
+  .login-card .btn.primary{width:100%;margin-top:18px;padding:11px 14px;font-size:.92rem}
+  .login-card .btn.primary:disabled{opacity:.6;cursor:default}
   @media (prefers-reduced-motion:reduce){*{animation:none!important}}
 </style>
 </head>
 <body>
+<div id="login-overlay" class="login-overlay">
+  <div class="login-card">
+    <h2>Connexion mydlink</h2>
+    <p class="sub">Identifiants du compte mydlink (celui de l'app D-Link), pour
+      joindre la caméra DCS-8000LH-F710.</p>
+    <form id="login-form">
+      <div class="field">
+        <label class="field-label" for="login-email">Email</label>
+        <input id="login-email" class="text-input" type="email" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label class="field-label" for="login-password">Mot de passe</label>
+        <input id="login-password" class="text-input" type="password" autocomplete="current-password" required>
+      </div>
+      <label class="checkrow">
+        <input id="login-remember" type="checkbox" checked>
+        Se souvenir sur cet appareil
+      </label>
+      <div id="login-error" class="login-error"></div>
+      <button id="login-submit" type="submit" class="btn primary">Se connecter</button>
+    </form>
+  </div>
+</div>
 <div class="wrap">
   <header>
     <div class="brand">
@@ -461,14 +508,63 @@
     };
     es.onerror=function(){ /* EventSource se reconnecte seul */ };
   }
-  connect();
 
-  // frames counter via /api/state (leger, 1/s)
-  setInterval(function(){
-    fetch("/api/state").then(function(r){return r.json();}).then(function(s){
-      $("frames").textContent = s.frames.toLocaleString("fr-FR");
-    }).catch(function(){});
-  }, 1000);
+  function startDashboard(){
+    connect();
+    // frames counter via /api/state (leger, 1/s)
+    setInterval(function(){
+      fetch("/api/state").then(function(r){return r.json();}).then(function(s){
+        $("frames").textContent = s.frames.toLocaleString("fr-FR");
+      }).catch(function(){});
+    }, 1000);
+  }
+
+  // ---- Connexion mydlink ----
+  var loginOverlay=$("login-overlay"), loginForm=$("login-form"), loginError=$("login-error"),
+      loginSubmit=$("login-submit");
+
+  function showLoginError(msg){
+    if(!msg){ loginError.classList.remove("show"); loginError.textContent=""; return; }
+    loginError.textContent = msg;
+    loginError.classList.add("show");
+  }
+
+  loginForm.addEventListener("submit", function(e){
+    e.preventDefault();
+    var email=$("login-email").value.trim();
+    var password=$("login-password").value;
+    var remember=$("login-remember").checked;
+    loginSubmit.disabled=true; loginSubmit.textContent="Connexion…";
+    showLoginError(null);
+    fetch("/api/auth", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({email:email, password:password, remember:remember})
+    }).then(function(r){ return r.json().then(function(d){ return {ok:r.ok, data:d}; }); })
+      .then(function(res){
+        if(res.ok && res.data.authenticated){
+          location.reload();   // redemarre proprement avec la session maintenant active
+          return;
+        }
+        showLoginError(res.data.error || "Connexion impossible.");
+        loginSubmit.disabled=false; loginSubmit.textContent="Se connecter";
+      }).catch(function(){
+        showLoginError("Erreur reseau locale, reessaie.");
+        loginSubmit.disabled=false; loginSubmit.textContent="Se connecter";
+      });
+  });
+
+  fetch("/api/auth").then(function(r){return r.json();}).then(function(d){
+    if(d.authenticated){
+      startDashboard();
+    } else {
+      if(d.error) showLoginError(d.error);
+      loginOverlay.classList.add("open");
+      $("login-email").focus();
+    }
+  }).catch(function(){
+    // API locale injoignable au chargement (tres improbable) : tente quand meme le dashboard
+    startDashboard();
+  });
 })();
 </script>
 </body>
