@@ -138,6 +138,12 @@ avec un déclencheur « au démarrage de l'ordinateur ».
   et cocher « Add python.exe to PATH » pendant l'installation, ou créer le
   venv (`python -m venv venv` à la racine du dépôt) pour que le lanceur le
   détecte automatiquement.
+- **`ModuleNotFoundError: No module named 'numpy'`** (ou `aiohttp`, etc.) :
+  le lanceur utilise le Python système faute de venv à la racine du dépôt.
+  Créer le venv et y installer les dépendances (voir
+  [Installation](#installation) : `python -m venv venv` puis
+  `venv\Scripts\python -m pip install -r requirements.txt`) — le lanceur le
+  détectera automatiquement au prochain lancement.
 - **`ffplay`/`ffmpeg` introuvable** : installer FFmpeg et l'ajouter au `PATH`,
   ou définir les variables d'environnement `FFPLAY`/`FFMPEG` avec le chemin
   complet des exécutables.
