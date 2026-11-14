@@ -187,6 +187,9 @@ simple par `payload[1] & 0x7F` : `96` = vidéo H264, `97` = audio opus.
   local + deux sockets UDP (`VIDEO_RELAY_PORT`/`AUDIO_RELAY_PORT`). Mot de
   passe demandé en interactif (`stderr`), donc à lancer soi-même dans un
   terminal, pas via un outil non-interactif.
+- `dashboard_server.py` + `dashboard.html` — dashboard web local (voir §6bis),
+  réutilise `live_view_standalone.live_view()` tel quel, branche `ffmpeg` au
+  lieu d'`ffplay`, sert `http://127.0.0.1:8099`.
 - `libsa_analysis/` — outils de désassemblage :
   - `find_syms.py <so> <nom1> <nom2> ...` — trouve adresse+taille d'un symbole exporté.
   - `disasm.py <so> <adresse_hex> <taille>` — désassemble une plage d'adresses.
@@ -371,6 +374,74 @@ fonctionnent déjà bien au-delà du direct :
 - Evénements : commande `sd_list_event`/`cont_evt_list_all`/`hd_list_event`
   identifiées dans le code décompilé (pas encore testées en pratique mais le
   format JSON est le même schéma que les autres commandes).
+
+## 6bis. Détection de présence — comment elle est RÉELLEMENT relevée, et le dashboard maison
+
+**Question initiale :** comment l'app officielle est-elle prévenue d'une
+détection de mouvement ? Objectif : exploiter ce signal dans un dashboard
+maison, sans dépendre du cloud payant D-Link.
+
+**Pistes testées et éliminées, dans l'ordre :**
+
+1. **Historique cloud (`POST /me/nvr/event/list`, `{data:{start_ts,end_ts}}`
+   en millisecondes).** Fonctionne (code 200), mais renvoie systématiquement
+   `num: 0, data: []` sur ce compte : cet appareil (gen2, `free_offer: 0`,
+   pas d'abonnement) ne stocke AUCUN événement côté cloud. Endpoints voisins
+   repérés dans le code décompilé mais non testés en pratique :
+   `/me/nvr/list/initiate`, `/me/nvr/list/video.m3u8`,
+   `/me/nvr/storyboard/info`.
+2. **WebSocket de signalisation (le canal DCD utilisé par
+   `live_view_standalone.py`, scope `event` inclus au `sign_in`).** Capture
+   sur une session complète (démarrage + plusieurs passages devant la caméra
+   + 30s de marge) : **aucun message lié à un événement de mouvement n'y
+   transite**, seulement les échanges `rtsp_command` du streaming.
+3. **Conclusion :** la détection est faite par le firmware de la caméra en
+   interne, puis remontée au cloud mydlink qui pousse une **notification push
+   Google FCM** vers l'app — un canal totalement séparé du streaming, vivant
+   dans les services Google Play. Capter ce canal est fragile et hors de
+   portée raisonnable (pas dans l'app elle-même, émulation FCM nécessaire).
+
+**Décision : détection de présence maison, sur le flux vidéo qu'on
+déchiffre déjà**, au lieu de dépendre du cloud D-Link. C'est ce qu'implémente
+`scripts_retro/dashboard_server.py` :
+- `ffmpeg` transcode le flux SRTP déchiffré en MJPEG (vidéo, servi tel quel au
+  navigateur via `multipart/x-mixed-replace`) et en PCM brut (audio, lu côté
+  navigateur avec Web Audio API pour une latence maîtrisée sans coupure —
+  voir plus bas).
+- Détection de mouvement : différence pixel-à-pixel entre deux images
+  successives sous-échantillonnées (160×90), au-delà d'un seuil par pixel
+  (`PIXEL_DELTA`), avec **hystérésis** (`motion_on`/`motion_off` séparés,
+  `motion_off` = `motion_on` × 0.45) pour éviter les oscillations rapides, et
+  un délai de calme (`MOTION_END_HOLD` = 4s) avant de clore un événement.
+- Détection jour/nuit : saturation HSV moyenne de l'image (image quasi
+  grayscale = mode nuit).
+- **Zones de détection** : rectangles normalisés (0..1) dessinés sur la vidéo
+  côté navigateur, convertis en masque booléen numpy côté serveur ; le niveau
+  de mouvement n'est alors calculé que sur les pixels du masque. Liste vide =
+  toute l'image surveillée.
+- **Sensibilité réglable** : un curseur 1–10 côté UI, mappé sur `motion_on`
+  (plus sensible → seuil plus bas), persisté dans `dashboard_config.json`.
+- **Historique persistant** : SQLite (`dashboard_events.db`), survit aux
+  redémarrages, avec pagination (`GET /api/events?limit=&before_id=`).
+- **Capture automatique** : l'image qui déclenche un `presence_start` est
+  sauvegardée sur disque (`captures/`, nettoyage simple au-delà de 600
+  fichiers) et référencée dans l'événement.
+- **Latence audio** : un simple `<audio>` HTML accumulait ~5s de tampon
+  incompressible côté navigateur (et un rattrapage par saut de `currentTime`
+  coupait le son au milieu des phrases). Solution : PCM brut (`s16le`, 48kHz
+  mono) lu via `fetch()` + `ReadableStream`, planifié sample par sample avec
+  `AudioContext`/`AudioBufferSourceNode` et un tampon cible d'environ 180ms
+  (`MIN_LEAD`) — latence basse, lecture continue sans coupure, resynchronise
+  seulement en cas de sous-alimentation réelle (coupure réseau).
+
+**Note sur le "defogger" (accès RTSP 100% local via Bluetooth LE) :** piste
+explorée pour éliminer totalement le cloud (même gratuit) du chemin vidéo.
+Le firmware ≥ 2.03.02 patche l'injection de commande BLE qu'exploite
+`dcs8000lh-configure.py` (confirmé par les notes de version D-Link et les
+retours de la communauté sur le dépôt `bmork/defogger`, issue #23 notamment :
+RTSP local cassé après la mise à 2.07.01). Sur le firmware de cette caméra
+(2.07.01), la piste BLE ne fonctionne plus. Abandonnée ; le chemin cloud
+(gratuit) + détection maison reste la solution retenue.
 
 ## 7. Détails techniques divers utiles
 

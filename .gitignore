@@ -12,6 +12,12 @@ device_info*.json
 *_out.txt
 *_session*.log
 
+# Dashboard local : donnees personnelles generees a l'usage (photos du domicile,
+# historique d'evenements, reglages de zones propres au logement)
+captures/
+*.db
+dashboard_config.json
+
 # Config / mémoire locale de l'assistant
 .claude/
 

@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Veille DCS-8000LH</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600;700&display=swap">
+<style>
+  /* Layout : bandeau d'etat + grille video / panneau lateral. Moniteur sombre par defaut. */
+  :root{
+    --bg:#0e1116; --panel:#161b22; --panel-2:#1c232d; --line:#2a323d;
+    --fg:#e6edf3; --muted:#8b97a7; --accent:#2dd4bf;
+    --calm:#3fb950; --alert:#f85149; --warn:#d29922; --night:#6e8bff;
+    --radius:14px; --gap:16px;
+  }
+  @media (prefers-color-scheme:light){ :root:not([data-theme="dark"]){
+    --bg:#eef1f5; --panel:#ffffff; --panel-2:#f3f6fa; --line:#d7dee7;
+    --fg:#111820; --muted:#5b6673; --accent:#0d9488;
+    --calm:#1a7f37; --alert:#cf222e; --warn:#9a6700; --night:#3b5bdb; color-scheme:light;
+  }}
+  :root[data-theme="light"]{
+    --bg:#eef1f5; --panel:#ffffff; --panel-2:#f3f6fa; --line:#d7dee7;
+    --fg:#111820; --muted:#5b6673; --accent:#0d9488;
+    --calm:#1a7f37; --alert:#cf222e; --warn:#9a6700; --night:#3b5bdb; color-scheme:light;
+  }
+  :root[data-theme="dark"]{ color-scheme:dark; }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{
+    background:var(--bg); color:var(--fg);
+    font-family:Inter,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    font-size:15px; line-height:1.5;
+    padding:max(16px,env(safe-area-inset-top)) max(16px,env(safe-area-inset-right)) 24px max(16px,env(safe-area-inset-left));
+  }
+  h1,h2,h3{font-family:"Space Grotesk",Inter,sans-serif;margin:0;text-wrap:balance}
+  .wrap{max-width:1180px;margin:0 auto}
+
+  header{display:flex;align-items:center;gap:14px;padding:6px 0 18px;flex-wrap:wrap}
+  .brand{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .brand h1{font-size:1.25rem;letter-spacing:-.01em}
+  .brand .sub{color:var(--muted);font-size:.82rem;letter-spacing:.02em}
+  .spacer{flex:1}
+  .pill{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;
+    font-size:.8rem;font-weight:600;border:1px solid var(--line);background:var(--panel)}
+  .dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex:none}
+  .pill.live .dot{background:var(--calm);box-shadow:0 0 0 0 color-mix(in srgb,var(--calm) 70%,transparent);animation:pulse 1.8s infinite}
+  .pill.recon .dot{background:var(--warn)} .pill.recon{color:var(--warn)}
+  .pill.conn .dot{background:var(--muted)}
+  @keyframes pulse{0%{box-shadow:0 0 0 0 color-mix(in srgb,var(--calm) 65%,transparent)}70%{box-shadow:0 0 0 7px transparent}100%{box-shadow:0 0 0 0 transparent}}
+  .icon-btn{appearance:none;cursor:pointer;border:1px solid var(--line);background:var(--panel);color:var(--fg);
+    width:38px;height:38px;border-radius:10px;font-size:1rem;display:grid;place-items:center}
+
+  .grid{display:grid;grid-template-columns:minmax(0,1fr) 340px;gap:var(--gap);align-items:start}
+  @media (max-width:880px){.grid{grid-template-columns:1fr}}
+
+  .video-card{position:relative;background:#000;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;aspect-ratio:16/9}
+  .video-card img{width:100%;height:100%;object-fit:contain;display:block}
+  .overlay{position:absolute;left:12px;top:12px;right:12px;display:flex;gap:8px;align-items:center;pointer-events:none}
+  .badge{display:inline-flex;align-items:center;gap:7px;padding:5px 11px;border-radius:999px;font-size:.78rem;font-weight:600;
+    background:color-mix(in srgb,#000 55%,transparent);color:#fff;backdrop-filter:blur(6px)}
+  .badge .dot{width:7px;height:7px}
+  .badge.rec .dot{background:var(--alert)}
+  .ov-right{margin-left:auto}
+  .badge.night{background:color-mix(in srgb,var(--night) 70%,#000)}
+
+  .side{display:flex;flex-direction:column;gap:var(--gap)}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+  .card h3{font-size:.72rem;text-transform:uppercase;letter-spacing:.09em;color:var(--muted);font-weight:600;margin-bottom:12px}
+
+  .presence{display:flex;align-items:center;gap:13px}
+  .lamp{width:46px;height:46px;border-radius:12px;flex:none;display:grid;place-items:center;
+    background:color-mix(in srgb,var(--calm) 16%,transparent);border:1px solid color-mix(in srgb,var(--calm) 40%,transparent)}
+  .lamp svg{width:24px;height:24px;stroke:var(--calm);fill:none;stroke-width:2}
+  .presence.on .lamp{background:color-mix(in srgb,var(--alert) 18%,transparent);border-color:color-mix(in srgb,var(--alert) 55%,transparent);animation:flash 1.1s infinite}
+  .presence.on .lamp svg{stroke:var(--alert)}
+  @keyframes flash{50%{background:color-mix(in srgb,var(--alert) 34%,transparent)}}
+  .presence .txt{display:flex;flex-direction:column;min-width:0}
+  .presence .txt b{font-size:1.02rem;font-family:"Space Grotesk",sans-serif}
+  .presence .txt span{color:var(--muted);font-size:.8rem}
+
+  .meter{height:10px;border-radius:999px;background:var(--panel-2);overflow:hidden;margin-top:4px;border:1px solid var(--line)}
+  .meter>i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--calm),var(--warn),var(--alert));transition:width .25s}
+  .rowline{display:flex;justify-content:space-between;align-items:baseline;gap:10px}
+  .val{font-variant-numeric:tabular-nums;font-weight:600;font-family:"Space Grotesk",sans-serif}
+
+  .kv{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:7px 0}
+  .kv+.kv{border-top:1px solid var(--line)}
+  .tag{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:.86rem}
+  .tag.day{color:var(--warn)} .tag.night{color:var(--night)}
+  .muted{color:var(--muted)}
+
+  .log{display:flex;flex-direction:column;gap:0;max-height:340px;overflow:auto}
+  .log .ev{display:flex;gap:11px;padding:9px 0;border-top:1px solid var(--line);align-items:center}
+  .log .ev:first-child{border-top:0}
+  .ev .stripe{width:3px;align-self:stretch;border-radius:3px;flex:none;background:var(--muted)}
+  .ev.start .stripe{background:var(--alert)} .ev.end .stripe{background:var(--calm)}
+  .ev.night .stripe{background:var(--night)} .ev.day .stripe{background:var(--warn)}
+  .ev .thumb{width:54px;height:36px;border-radius:6px;object-fit:cover;flex:none;
+    background:var(--panel-2);cursor:pointer;border:1px solid var(--line)}
+  .ev .ebody{display:flex;flex-direction:column;min-width:0}
+  .ev .ebody b{font-size:.9rem;font-weight:600}
+  .ev .ebody time{color:var(--muted);font-size:.76rem;font-variant-numeric:tabular-nums}
+  .empty{color:var(--muted);font-size:.86rem;padding:8px 0}
+  footer{color:var(--muted);font-size:.76rem;text-align:center;padding-top:20px}
+
+  /* ---- Reglages : sensibilite + zones de detection ---- */
+  .field+.field{margin-top:16px}
+  input[type=range].slider{width:100%;accent-color:var(--accent);margin:9px 0 4px;height:4px}
+  .rowline.hint{font-size:.7rem;color:var(--muted)}
+  .btn{appearance:none;cursor:pointer;border:1px solid var(--line);background:var(--panel-2);color:var(--fg);
+    padding:8px 14px;border-radius:9px;font-size:.84rem;font-weight:600;font-family:inherit}
+  .btn:hover{border-color:var(--accent)}
+  .btn.primary{background:var(--accent);color:#06201c;border-color:var(--accent)}
+  .btn.ghost{background:transparent}
+  .btn:disabled{opacity:.55;cursor:default}
+  .zone-actions{display:flex;gap:8px;margin-top:10px;flex-wrap:wrap}
+  .hint-text{color:var(--muted);font-size:.78rem;margin:10px 0 0;line-height:1.45}
+
+  .zone-layer{position:absolute;inset:0;pointer-events:none}
+  .zone-layer.editing{pointer-events:auto;cursor:crosshair}
+  .zone-rect{position:absolute;border:2px dashed var(--accent);border-radius:4px;
+    background:color-mix(in srgb,var(--accent) 12%,transparent);opacity:.65}
+  .zone-layer.editing .zone-rect{border-style:solid;opacity:1}
+  .zone-draft{position:absolute;border:2px dashed var(--accent);border-radius:4px;
+    background:color-mix(in srgb,var(--accent) 10%,transparent)}
+  .zone-remove{position:absolute;top:-9px;right:-9px;width:20px;height:20px;border-radius:50%;
+    background:var(--alert);color:#fff;border:2px solid var(--panel);font-size:.72rem;line-height:1;
+    display:grid;place-items:center;cursor:pointer}
+
+  /* ---- Visionneuse de capture ---- */
+  .lightbox{position:fixed;inset:0;background:color-mix(in srgb,#000 82%,transparent);
+    display:none;align-items:center;justify-content:center;z-index:50;padding:24px;cursor:zoom-out}
+  .lightbox.open{display:flex}
+  .lightbox img{max-width:100%;max-height:100%;border-radius:10px;box-shadow:0 20px 60px rgba(0,0,0,.5)}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>DCS-8000LH-F710</h1>
+      <span class="sub">Veille locale · détection de présence maison</span>
+    </div>
+    <div class="spacer"></div>
+    <span id="status" class="pill conn"><span class="dot"></span><span id="status-txt">Connexion…</span></span>
+    <button id="sound" class="icon-btn" title="Activer le son" aria-label="Activer le son">🔇</button>
+    <button id="theme" class="icon-btn" title="Thème clair/sombre" aria-label="Changer de thème">◐</button>
+  </header>
+
+  <div class="grid">
+    <div class="video-card">
+      <img id="video" alt="Flux caméra en direct" src="/stream.mjpeg">
+      <div id="zone-layer" class="zone-layer"></div>
+      <div class="overlay">
+        <span class="badge rec"><span class="dot"></span>EN DIRECT</span>
+        <span id="ov-presence" class="badge ov-right" hidden><span class="dot" style="background:var(--alert)"></span>Présence</span>
+        <span id="ov-night" class="badge night" hidden>Mode nuit</span>
+      </div>
+    </div>
+
+    <div class="side">
+      <div class="card">
+        <h3>Présence</h3>
+        <div id="presence" class="presence">
+          <div class="lamp">
+            <svg viewBox="0 0 24 24"><path d="M12 13a4 4 0 100-8 4 4 0 000 8z"/><path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6"/></svg>
+          </div>
+          <div class="txt">
+            <b id="presence-state">Aucun mouvement</b>
+            <span id="presence-sub">Surveillance active</span>
+          </div>
+        </div>
+        <div style="margin-top:14px">
+          <div class="rowline"><span class="muted" style="font-size:.8rem">Niveau de mouvement</span><span class="val" id="level-val">0 %</span></div>
+          <div class="meter"><i id="level-bar"></i></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>État</h3>
+        <div class="kv"><span class="muted">Éclairage</span><span id="daynight" class="tag day"><span class="dot" style="background:var(--warn)"></span>Jour</span></div>
+        <div class="kv"><span class="muted">Images reçues</span><span class="val" id="frames">0</span></div>
+        <div class="kv"><span class="muted">Flux</span><span class="val" id="stream-state">—</span></div>
+      </div>
+
+      <div class="card">
+        <h3>Réglages de détection</h3>
+        <div class="field">
+          <div class="rowline"><span class="muted" style="font-size:.85rem">Sensibilité</span><span class="val" id="sens-val">7</span></div>
+          <input type="range" id="sens-range" class="slider" min="1" max="10" step="1" value="7">
+          <div class="rowline hint"><span>Peu sensible</span><span>Très sensible</span></div>
+        </div>
+        <div class="field">
+          <div class="rowline">
+            <span class="muted" style="font-size:.85rem">Zone surveillée</span>
+            <span class="muted" id="zones-count" style="font-size:.78rem">Toute l'image</span>
+          </div>
+          <div class="zone-actions">
+            <button id="zone-edit" class="btn">Définir des zones</button>
+            <button id="zone-clear" class="btn ghost" hidden>Tout effacer</button>
+          </div>
+          <p class="hint-text" id="zone-hint" hidden>Cliquez-glissez sur l'image pour dessiner une zone. Cliquez le × pour en retirer une. Sans zone, toute l'image est surveillée.</p>
+        </div>
+      </div>
+
+      <div class="card">
+        <h3>Journal des événements</h3>
+        <div id="log" class="log"><div class="empty">En attente d'événements…</div></div>
+        <button id="log-more" class="btn ghost" style="width:100%;margin-top:10px">Charger plus</button>
+      </div>
+    </div>
+  </div>
+  <footer>Flux déchiffré en local · aucune dépendance au cloud payant · détection de mouvement et historique calculés sur l'appareil</footer>
+</div>
+<div id="lightbox" class="lightbox"><img id="lightbox-img" alt="Capture en grand"></div>
+
+<script>
+(function(){
+  "use strict";
+  var $ = function(id){ return document.getElementById(id); };
+
+  // ---- Theme toggle (per-viewer convenience) ----
+  try{ var saved = localStorage.getItem("cam-theme"); if(saved) document.documentElement.setAttribute("data-theme", saved); }catch(e){}
+  $("theme").addEventListener("click", function(){
+    var cur = document.documentElement.getAttribute("data-theme");
+    var mql = window.matchMedia("(prefers-color-scheme: dark)");
+    var next = cur ? (cur==="dark"?"light":"dark") : (mql.matches?"light":"dark");
+    document.documentElement.setAttribute("data-theme", next);
+    try{ localStorage.setItem("cam-theme", next); }catch(e){}
+  });
+
+  // ---- Son : PCM brut (s16le 48k mono) lu via Web Audio, faible latence, sans coupure ----
+  var SR=48000, MIN_LEAD=0.18;
+  var soundOn=false, audioCtx=null, audioAbort=null, playHead=0;
+
+  function schedule(f32){
+    if(!audioCtx) return;
+    var buf=audioCtx.createBuffer(1,f32.length,SR);
+    buf.copyToChannel(f32,0);
+    var src=audioCtx.createBufferSource();
+    src.buffer=buf; src.connect(audioCtx.destination);
+    var now=audioCtx.currentTime;
+    if(playHead < now+MIN_LEAD) playHead=now+MIN_LEAD;  // sous-alimentation -> resync au direct
+    src.start(playHead);
+    playHead+=buf.duration;
+  }
+
+  function startAudio(){
+    audioCtx=new (window.AudioContext||window.webkitAudioContext)({sampleRate:SR});
+    playHead=0;
+    audioAbort=new AbortController();
+    fetch("/audio.pcm",{signal:audioAbort.signal}).then(function(resp){
+      var reader=resp.body.getReader(), leftover=new Uint8Array(0);
+      (function pump(){
+        reader.read().then(function(res){
+          if(res.done) return;
+          var data=res.value;
+          if(leftover.length){
+            var m=new Uint8Array(leftover.length+data.length);
+            m.set(leftover,0); m.set(data,leftover.length); data=m;
+          }
+          var n=data.length>>1, usable=n*2;
+          if(n>0){
+            var ab=data.buffer.slice(data.byteOffset, data.byteOffset+usable);
+            var i16=new Int16Array(ab), f32=new Float32Array(n);
+            for(var i=0;i<n;i++) f32[i]=i16[i]/32768;
+            schedule(f32);
+          }
+          leftover=data.subarray(usable);
+          pump();
+        }).catch(function(){});
+      })();
+    }).catch(function(){});
+  }
+  function stopAudio(){
+    if(audioAbort){ try{audioAbort.abort();}catch(e){} audioAbort=null; }
+    if(audioCtx){ try{audioCtx.close();}catch(e){} audioCtx=null; }
+    playHead=0;
+  }
+  $("sound").addEventListener("click", function(){
+    if(!soundOn){ startAudio(); soundOn=true; $("sound").textContent="🔊"; $("sound").title="Couper le son"; }
+    else { stopAudio(); soundOn=false; $("sound").textContent="🔇"; $("sound").title="Activer le son"; }
+  });
+
+  function fmtTime(ts){ var d=new Date(ts); return d.toLocaleTimeString("fr-FR",{hour:"2-digit",minute:"2-digit",second:"2-digit"}); }
+
+  function setStatus(s){
+    var el=$("status"), t=$("status-txt");
+    el.className="pill "+(s==="direct"?"live":s==="reconnexion"?"recon":"conn");
+    t.textContent = s==="direct"?"En direct":s==="reconnexion"?"Reconnexion…":"Connexion…";
+    $("stream-state").textContent = s==="direct"?"actif":s;
+  }
+
+  function setMotion(active, level){
+    var p=$("presence");
+    p.classList.toggle("on", !!active);
+    $("presence-state").textContent = active ? "Présence détectée" : "Aucun mouvement";
+    $("presence-sub").textContent = active ? "Mouvement en cours" : "Surveillance active";
+    $("ov-presence").hidden = !active;
+    if(typeof level==="number") setLevel(level);
+  }
+  function setLevel(level){
+    var pct=Math.max(0,Math.min(100, Math.round(level/0.15*100)));
+    $("level-bar").style.width=pct+"%";
+    $("level-val").textContent=pct+" %";
+  }
+  function setNight(night){
+    var el=$("daynight");
+    el.className="tag "+(night?"night":"day");
+    el.innerHTML='<span class="dot" style="background:'+(night?"var(--night)":"var(--warn)")+'"></span>'+(night?"Nuit":"Jour");
+    $("ov-night").hidden = !night;
+  }
+
+  // ---- Visionneuse de capture ----
+  var lightbox=$("lightbox"), lightboxImg=$("lightbox-img");
+  function openLightbox(src){ lightboxImg.src=src; lightbox.classList.add("open"); }
+  function closeLightbox(){ lightbox.classList.remove("open"); lightboxImg.src=""; }
+  lightbox.addEventListener("click", closeLightbox);
+  document.addEventListener("keydown", function(e){ if(e.key==="Escape") closeLightbox(); });
+
+  var LABELS={presence_start:"Présence détectée",presence_end:"Fin de présence",night_on:"Passage en mode nuit",night_off:"Retour en mode jour"};
+  var CLS={presence_start:"start",presence_end:"end",night_on:"night",night_off:"day"};
+  var logEl=$("log"), logMoreBtn=$("log-more"), hasEvents=false, oldestId=null;
+
+  function renderEventRow(ev){
+    var row=document.createElement("div");
+    row.className="ev "+(CLS[ev.type]||"");
+    var extra = ev.type==="presence_end" && ev.duration!=null ? " · "+ev.duration+" s" : "";
+    var thumb = ev.snapshot ? '<img class="thumb" src="/captures/'+encodeURIComponent(ev.snapshot)+'" alt="Capture" loading="lazy">' : "";
+    row.innerHTML='<div class="stripe"></div>'+thumb+'<div class="ebody"><b>'+LABELS[ev.type]+'</b><time>'+fmtTime(ev.ts)+extra+'</time></div>';
+    if(ev.snapshot){
+      var src="/captures/"+encodeURIComponent(ev.snapshot);
+      row.querySelector(".thumb").addEventListener("click", function(){ openLightbox(src); });
+    }
+    if(ev.id!=null) oldestId = oldestId==null ? ev.id : Math.min(oldestId, ev.id);
+    return row;
+  }
+  function addEvent(ev){   // evenement en direct : vient en tete du journal
+    if(!LABELS[ev.type]) return;
+    if(!hasEvents){ logEl.innerHTML=""; hasEvents=true; }
+    logEl.insertBefore(renderEventRow(ev), logEl.firstChild);
+    while(logEl.children.length>200) logEl.removeChild(logEl.lastChild);
+  }
+  logMoreBtn.addEventListener("click", function(){
+    var url="/api/events?limit=20"+(oldestId!=null?"&before_id="+oldestId:"");
+    logMoreBtn.disabled=true; logMoreBtn.textContent="Chargement…";
+    fetch(url).then(function(r){return r.json();}).then(function(d){
+      var evs=(d.events||[]).filter(function(ev){ return LABELS[ev.type]; });
+      if(!evs.length){
+        logMoreBtn.textContent="Pas d'historique plus ancien"; logMoreBtn.disabled=true;
+        return;
+      }
+      if(!hasEvents){ logEl.innerHTML=""; hasEvents=true; }
+      evs.forEach(function(ev){ logEl.appendChild(renderEventRow(ev)); });
+      logMoreBtn.disabled=false; logMoreBtn.textContent="Charger plus";
+    }).catch(function(){ logMoreBtn.disabled=false; logMoreBtn.textContent="Charger plus"; });
+  });
+
+  // ---- Réglages : sensibilité + zones de détection ----
+  var sensRange=$("sens-range"), sensVal=$("sens-val"), sensTimer=null;
+  var zoneLayer=$("zone-layer"), zoneEditBtn=$("zone-edit"), zoneClearBtn=$("zone-clear"),
+      zoneHint=$("zone-hint"), zonesCountEl=$("zones-count");
+  var zones=[], zoneEditing=false;
+
+  function renderZones(){
+    zoneLayer.innerHTML="";
+    zones.forEach(function(z, idx){
+      var r=document.createElement("div");
+      r.className="zone-rect";
+      r.style.left=(z[0]*100)+"%"; r.style.top=(z[1]*100)+"%";
+      r.style.width=((z[2]-z[0])*100)+"%"; r.style.height=((z[3]-z[1])*100)+"%";
+      if(zoneEditing){
+        var rm=document.createElement("span");
+        rm.className="zone-remove"; rm.textContent="×";
+        rm.addEventListener("mousedown", function(e){ e.stopPropagation(); });
+        rm.addEventListener("click", function(e){
+          e.stopPropagation(); zones.splice(idx,1); renderZones(); saveZones();
+        });
+        r.appendChild(rm);
+      }
+      zoneLayer.appendChild(r);
+    });
+    zonesCountEl.textContent = zones.length===0 ? "Toute l'image" : (zones.length===1 ? "1 zone" : zones.length+" zones");
+    zoneClearBtn.hidden = zones.length===0;
+  }
+  function saveZones(){
+    fetch("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({zones:zones})}).catch(function(){});
+  }
+  zoneEditBtn.addEventListener("click", function(){
+    zoneEditing=!zoneEditing;
+    zoneLayer.classList.toggle("editing", zoneEditing);
+    zoneHint.hidden=!zoneEditing;
+    zoneEditBtn.textContent = zoneEditing ? "Terminer" : "Définir des zones";
+    zoneEditBtn.classList.toggle("primary", zoneEditing);
+    renderZones();
+  });
+  zoneClearBtn.addEventListener("click", function(){ zones=[]; renderZones(); saveZones(); });
+
+  var draft=null, startPt=null;
+  function ptFromEvent(e){
+    var rect=zoneLayer.getBoundingClientRect();
+    var x=(e.clientX-rect.left)/rect.width, y=(e.clientY-rect.top)/rect.height;
+    return [Math.max(0,Math.min(1,x)), Math.max(0,Math.min(1,y))];
+  }
+  zoneLayer.addEventListener("mousedown", function(e){
+    if(!zoneEditing || e.target.classList.contains("zone-remove")) return;
+    startPt=ptFromEvent(e);
+    draft=document.createElement("div");
+    draft.className="zone-draft";
+    zoneLayer.appendChild(draft);
+    e.preventDefault();
+  });
+  window.addEventListener("mousemove", function(e){
+    if(!draft||!startPt) return;
+    var p=ptFromEvent(e);
+    var x0=Math.min(startPt[0],p[0]), x1=Math.max(startPt[0],p[0]);
+    var y0=Math.min(startPt[1],p[1]), y1=Math.max(startPt[1],p[1]);
+    draft.style.left=(x0*100)+"%"; draft.style.top=(y0*100)+"%";
+    draft.style.width=((x1-x0)*100)+"%"; draft.style.height=((y1-y0)*100)+"%";
+  });
+  window.addEventListener("mouseup", function(e){
+    if(!draft||!startPt) return;
+    var p=ptFromEvent(e);
+    var x0=Math.min(startPt[0],p[0]), x1=Math.max(startPt[0],p[0]);
+    var y0=Math.min(startPt[1],p[1]), y1=Math.max(startPt[1],p[1]);
+    zoneLayer.removeChild(draft);
+    draft=null; startPt=null;
+    if(x1-x0>0.02 && y1-y0>0.02){ zones.push([x0,y0,x1,y1]); renderZones(); saveZones(); }
+  });
+
+  sensRange.addEventListener("input", function(){
+    sensVal.textContent=sensRange.value;
+    clearTimeout(sensTimer);
+    sensTimer=setTimeout(function(){
+      fetch("/api/settings",{method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({sensitivity:Number(sensRange.value)})}).catch(function(){});
+    }, 350);
+  });
+
+  fetch("/api/settings").then(function(r){return r.json();}).then(function(s){
+    sensRange.value=Math.round(s.sensitivity);
+    sensVal.textContent=sensRange.value;
+    zones = s.zones||[];
+    renderZones();
+  }).catch(function(){});
+
+  // ---- SSE ----
+  function connect(){
+    var es=new EventSource("/events");
+    es.onmessage=function(m){
+      var d; try{ d=JSON.parse(m.data); }catch(e){ return; }
+      if(d.kind==="status") setStatus(d.status);
+      else if(d.kind==="motion") setMotion(d.active, d.level);
+      else if(d.kind==="level") setLevel(d.level);
+      else if(d.kind==="daynight") setNight(d.night);
+      else if(d.kind==="event") addEvent(d);
+    };
+    es.onerror=function(){ /* EventSource se reconnecte seul */ };
+  }
+  connect();
+
+  // frames counter via /api/state (leger, 1/s)
+  setInterval(function(){
+    fetch("/api/state").then(function(r){return r.json();}).then(function(s){
+      $("frames").textContent = s.frames.toLocaleString("fr-FR");
+    }).catch(function(){});
+  }, 1000);
+})();
+</script>
+</body>
+</html>
