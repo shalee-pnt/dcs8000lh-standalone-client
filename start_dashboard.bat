@@ -2,8 +2,13 @@
 setlocal
 set "ROOT=%~dp0"
 set "PYEXE=%ROOT%venv\Scripts\python.exe"
-if not exist "%PYEXE%" set "PYEXE=python"
 
+if exist "%PYEXE%" goto havepy
+
+REM Pas de venv local : on retombe sur le Python du PATH. On evite "where"
+REM avec un chemin complet (echoue sur certaines machines) ; ici l'argument
+REM est un nom nu, ce qui marche de maniere fiable.
+set "PYEXE=python"
 where "%PYEXE%" >nul 2>nul
 if errorlevel 1 (
     echo [ERREUR] Python introuvable. Voir README.md ^(section Installation^).
@@ -11,6 +16,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:havepy
 cd /d "%ROOT%scripts_retro"
 
 :loop
