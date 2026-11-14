@@ -185,8 +185,8 @@ simple par `payload[1] & 0x7F` : `96` = vidéo H264, `97` = audio opus.
 - `live_view_standalone.py` — **le script principal**, 100% autonome côté
   signalisation + déchiffrement SRTP, relaie vers `ffplay` via un fichier SDP
   local + deux sockets UDP (`VIDEO_RELAY_PORT`/`AUDIO_RELAY_PORT`). Mot de
-  passe demandé en interactif (`stderr`), donc à lancer soi-même dans un
-  terminal, pas via un outil non-interactif.
+  passe demandé en interactif (`stderr`), sauf si identifiants fournis via
+  `camera_config.json`/variables d'environnement (voir §6ter — packaging).
 - `dashboard_server.py` + `dashboard.html` — dashboard web local (voir §6bis),
   réutilise `live_view_standalone.live_view()` tel quel, branche `ffmpeg` au
   lieu d'`ffplay`, sert `http://127.0.0.1:8099`.
@@ -442,6 +442,39 @@ retours de la communauté sur le dépôt `bmork/defogger`, issue #23 notamment :
 RTSP local cassé après la mise à 2.07.01). Sur le firmware de cette caméra
 (2.07.01), la piste BLE ne fonctionne plus. Abandonnée ; le chemin cloud
 (gratuit) + détection maison reste la solution retenue.
+
+## 6ter. Packaging — identifiants, auto-détection, robustesse réseau
+
+Pour que le dashboard tourne sans supervision (lancé au démarrage de
+Windows, redémarré seul après une coupure) :
+
+- **Identifiants** (`live_view_standalone.load_credentials()`), ordre de
+  priorité : variables d'environnement `MYDLINK_EMAIL`/`MYDLINK_PASSWORD` →
+  fichier `camera_config.json` (gitignored, modèle dans
+  `camera_config.example.json`) → saisie interactive en dernier recours.
+  Réutilisé automatiquement par `dashboard_server.py` puisqu'il appelle
+  `lv.cloud_login()`.
+- **IP locale auto-détectée** (`_detect_local_addr()`) : astuce du socket UDP
+  "connect" vers `8.8.8.8:80` (aucun paquet réellement envoyé, juste une
+  résolution de route/interface locale par le noyau) — plus besoin d'éditer
+  `LOCAL_ADDR` à la main dans le cas courant (une seule interface réseau
+  active). Override toujours possible via la variable d'environnement.
+- **Retries réseau** (`_request_with_retry()`) : les appels HTTP de
+  `cloud_login()` (login OAuth, liste d'appareils, détails) ont un timeout de
+  15s et réessaient avec un backoff exponentiel (3s → 60s max, 5 tentatives)
+  sur les erreurs réseau transitoires uniquement — pas sur un échec
+  d'authentification (identifiants faux), qui doit échouer vite avec un
+  message clair plutôt que de boucler inutilement.
+- **Boucle de reconnexion du dashboard** (`camera_loop()`) : backoff
+  exponentiel (2s → 60s) sur les échecs consécutifs (hors stall/renégociation
+  normale, qui reste à délai fixe court). Après 3 échecs d'affilée, rappelle
+  `cloud_login()` pour obtenir un `access_token`/`device_token` frais — utile
+  si le jeton cloud expire sur une instance qui tourne plusieurs jours (durée
+  de vie du jeton non documentée côté D-Link, pas vérifiée empiriquement).
+- **`start_dashboard.bat`** : relance tout le processus Python si jamais il
+  se termine malgré les retries internes (ex. coupure internet qui dépasse
+  les 5 tentatives) — filet de sécurité simple plutôt qu'une vraie
+  supervision de service.
 
 ## 7. Détails techniques divers utiles
 

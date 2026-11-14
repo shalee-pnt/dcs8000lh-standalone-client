@@ -35,8 +35,24 @@ HEADERS = {
     "x-md-os-type": "android", "x-md-os-version": "7.0",
 }
 
-LOCAL_ADDR = os.environ.get("LOCAL_ADDR", "192.168.1.34")  # ton IP locale sur le LAN (a adapter)
+def _detect_local_addr():
+    """Deduit l'IP locale utilisee pour joindre la camera (meme LAN), sans
+    envoyer de paquet reel (astuce du socket UDP 'connect', qui se contente
+    de choisir une interface/route sans rien emettre)."""
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+        finally:
+            s.close()
+    except Exception:
+        return "192.168.1.2"  # repli si aucune interface reseau n'est joignable
+
+
+LOCAL_ADDR = os.environ.get("LOCAL_ADDR") or _detect_local_addr()  # auto-detectee, ou $LOCAL_ADDR
 LOCAL_PORT = 47000
+CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_config.json")
 FFPLAY = os.environ.get("FFPLAY", "ffplay")  # ffplay doit etre dans le PATH, ou definir $FFPLAY
 SDP_PATH = os.path.join(tempfile.gettempdir(), "dcs8000lh.sdp")
 WS_DEBUG_LOG = os.path.join(tempfile.gettempdir(), "dcs8000lh_ws_debug.log")  # journal debug optionnel
@@ -128,10 +144,58 @@ def stun_get_mapped_address(stun_host, stun_port, local_addr, local_port, timeou
     return mapped_ip, mapped_port
 
 
-def cloud_login():
+def load_credentials():
+    """Identifiants mydlink, dans cet ordre de priorite :
+    1) variables d'environnement MYDLINK_EMAIL / MYDLINK_PASSWORD
+    2) fichier camera_config.json a cote du script (voir camera_config.example.json)
+    3) saisie interactive (email en clair, mot de passe masque, jamais ecrit nulle part)
+    """
+    env_email = os.environ.get("MYDLINK_EMAIL")
+    env_pw = os.environ.get("MYDLINK_PASSWORD")
+    if env_email and env_pw:
+        return env_email, env_pw
+
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            email, password = cfg.get("email"), cfg.get("password")
+            if email and password:
+                return email, password
+            print("camera_config.json trouve mais incomplet (email/password manquant), "
+                  "saisie interactive...", file=sys.stderr)
+        except Exception as e:
+            print(f"camera_config.json illisible ({e}), saisie interactive...", file=sys.stderr)
+
     print("Email du compte mydlink : ", end="", file=sys.stderr, flush=True)
     email = input().strip()
     password = getpass.getpass("Mot de passe (saisie masquee) : ", stream=sys.stderr)
+    return email, password
+
+
+def _request_with_retry(method, url, max_retries=5, **kwargs):
+    """Execute une requete HTTP avec nouvelles tentatives (backoff exponentiel,
+    plafonne a 60s) sur les erreurs reseau transitoires (coupure wifi, DNS,
+    timeout...). N'intercepte PAS les erreurs applicatives (identifiants
+    invalides, etc.), qui remontent normalement via le code HTTP/JSON renvoye."""
+    kwargs.setdefault("timeout", 15)
+    kwargs.setdefault("verify", False)
+    kwargs.setdefault("headers", HEADERS)
+    delay = 3
+    for attempt in range(1, max_retries + 1):
+        try:
+            return method(url, **kwargs)
+        except requests.exceptions.RequestException as e:
+            if attempt == max_retries:
+                print(f"ECHEC reseau apres {max_retries} tentatives ({url}): {e}", file=sys.stderr)
+                sys.exit(1)
+            print(f"Erreur reseau ({e}), nouvelle tentative dans {delay}s...", file=sys.stderr)
+            time.sleep(delay)
+            delay = min(delay * 2, 60)
+
+
+def cloud_login():
+    email, password = load_credentials()
     pw_hash = hashlib.md5(password.encode()).hexdigest()
 
     qs = (
@@ -148,7 +212,7 @@ def cloud_login():
     sig = hashlib.md5((qs + OAUTH_SECRET).encode()).hexdigest()
     login_url = API_URL + qs + "&sig=" + sig
 
-    r = requests.get(login_url, headers=HEADERS, verify=False, allow_redirects=True)
+    r = _request_with_retry(requests.get, login_url, allow_redirects=True)
     params = {}
     for h in r.history:
         if h.status_code == 302:
@@ -156,7 +220,7 @@ def cloud_login():
             params = urllib.parse.parse_qs(urllib.parse.urlparse(loc).query)
 
     if not params or "access_token" not in params:
-        print("ECHEC CONNEXION:", r.text[:500], file=sys.stderr)
+        print("ECHEC CONNEXION (identifiants incorrects ?) :", r.text[:500], file=sys.stderr)
         sys.exit(1)
 
     access_token = params["access_token"][0]
@@ -164,7 +228,7 @@ def cloud_login():
     print("Connexion cloud OK. api_site =", api_site, file=sys.stderr)
 
     device_list_url = f"https://{api_site}/me/device/list?access_token={access_token}"
-    r2 = requests.get(device_list_url, headers=HEADERS, verify=False)
+    r2 = _request_with_retry(requests.get, device_list_url)
     devices = r2.json().get("data", [])
     if not devices:
         print("Aucun appareil trouve", file=sys.stderr)
@@ -175,17 +239,22 @@ def cloud_login():
 
     detail_url = f"https://{api_site}/me/device/info?access_token={access_token}"
     body = {"data": [{"mac": mac, "mydlink_id": mydlink_id}]}
-    r3 = requests.post(detail_url, headers={**HEADERS, "Content-Type": "application/json"},
-                        json=body, verify=False)
+    r3 = _request_with_retry(requests.post, detail_url,
+                              headers={**HEADERS, "Content-Type": "application/json"}, json=body)
     detail = r3.json()["data"][0]
 
-    return {
-        "email": email,
-        "access_token": access_token,
-        "mac": mac,
-        "device_token": detail["device_token"],
-        "dcd_url": detail["DCD"],
-    }
+    try:
+        return {
+            "email": email,
+            "access_token": access_token,
+            "mac": mac,
+            "device_token": detail["device_token"],
+            "dcd_url": detail["DCD"],
+        }
+    except KeyError as e:
+        print(f"Reponse de l'API incomplete (champ manquant: {e}). "
+              f"L'appareil est-il bien associe a ce compte ?", file=sys.stderr)
+        sys.exit(1)
 
 
 async def live_view(info, udp_video, udp_audio, ffplay):

@@ -1,0 +1,13 @@
+# Client autonome (live_view_standalone.py, mydlink_check.py)
+requests
+websockets
+pylibsrtp
+
+# Dashboard de veille (dashboard_server.py)
+aiohttp
+numpy
+pillow
+
+# Optionnel, uniquement pour les outils d'analyse binaire (scripts_retro/libsa_analysis)
+# capstone
+# pyelftools

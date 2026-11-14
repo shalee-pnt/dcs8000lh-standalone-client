@@ -438,6 +438,7 @@ def dispatch_audio(chunk):
 # ---------------- Boucle camera (asyncio, reutilise live_view) ----------------
 
 async def camera_loop(info, udp_video, udp_audio):
+    consecutive_fails = 0   # erreurs d'affilee (hors stall/renegociation normale)
     while True:
         set_status("connexion")
         ff = launch_ffmpeg_video()
@@ -447,8 +448,10 @@ async def camera_loop(info, udp_video, udp_audio):
         set_status("direct")
         try:
             await lv.live_view(info, udp_video, udp_audio, ff)
+            clean_session = True   # retour normal (stall/fin de session), pas une panne
         except Exception as e:
             print("session interrompue:", e, "-> reconnexion", file=sys.stderr)
+            clean_session = False
         finally:
             _analyze.prev = None
             for p in (ff, ffa):
@@ -458,8 +461,28 @@ async def camera_loop(info, udp_video, udp_audio):
                         p.wait(timeout=3)
                     except Exception:
                         p.kill()
+
+        if clean_session:
+            consecutive_fails = 0
+            backoff = 2.0
+        else:
+            consecutive_fails += 1
+            backoff = min(2.0 * (2 ** (consecutive_fails - 1)), 60.0)   # 2,4,8,16,...,60s
+            # Apres plusieurs echecs d'affilee, le token/session cloud est peut-etre
+            # perime : on se reconnecte au cloud pour en obtenir des neufs plutot
+            # que de reessayer indefiniment avec les memes identifiants de session.
+            if consecutive_fails >= 3:
+                print(f"{consecutive_fails} echecs d'affilee, rafraichissement de la session cloud...",
+                      file=sys.stderr)
+                try:
+                    info = lv.cloud_login()
+                except SystemExit:
+                    raise
+                except Exception as e:
+                    print("rafraichissement de session echoue:", e, file=sys.stderr)
+
         set_status("reconnexion")
-        await asyncio.sleep(2)   # laisse la camera liberer l'ancienne session
+        await asyncio.sleep(backoff)   # laisse la camera liberer l'ancienne session
 
 
 # ---------------- Serveur web ----------------
