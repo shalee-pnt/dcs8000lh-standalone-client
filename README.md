@@ -13,6 +13,18 @@ DCS-8000LH** (firmware 2.07.01), aboutissant à :
    jour/nuit, captures automatiques, historique persistant, zones de
    détection et sensibilité réglables depuis l'interface.
 
+## Télécharger le dashboard tout-en-un (Windows)
+
+Pas besoin d'installer Python ni FFmpeg : **[Releases](../../releases/latest)**
+propose un `.zip` avec l'exécutable du dashboard déjà empaqueté (FFmpeg
+inclus). Télécharger, dézipper, copier `camera_config.example.json` en
+`camera_config.json` (y mettre ses identifiants mydlink), double-cliquer
+`DCS8000LH-Dashboard.exe`, ouvrir `http://127.0.0.1:8099`. Voir le
+`README.txt` du zip pour le détail.
+
+Pour tout le reste (client autonome, scripts d'analyse, lancer depuis les
+sources) : voir [Installation](#installation) ci-dessous.
+
 ## Contenu
 
 - **[JOURNAL_RETRO_ENGINEERING.md](JOURNAL_RETRO_ENGINEERING.md)** — le journal

@@ -25,6 +25,18 @@ import websockets
 
 urllib3.disable_warnings()
 
+
+def _app_dir():
+    """Dossier de reference pour les fichiers "a cote" de l'app (config,
+    captures, ffmpeg...) : celui de l'executable quand empaquete avec
+    PyInstaller (sys.frozen), sinon celui du script source."""
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+APP_DIR = _app_dir()
+
 API_URL = "https://api.auto.mydlink.com"
 CLIENT_ID_OAUTH = "mydlinkuapandroid"
 ANDROID_ID = "bd36a6c011f1287e"
@@ -52,8 +64,17 @@ def _detect_local_addr():
 
 LOCAL_ADDR = os.environ.get("LOCAL_ADDR") or _detect_local_addr()  # auto-detectee, ou $LOCAL_ADDR
 LOCAL_PORT = 47000
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_config.json")
-FFPLAY = os.environ.get("FFPLAY", "ffplay")  # ffplay doit etre dans le PATH, ou definir $FFPLAY
+CONFIG_PATH = os.path.join(APP_DIR, "camera_config.json")
+
+
+def _default_ffplay():
+    """ffplay a cote de l'executable (packagee PyInstaller) en priorite,
+    sinon celui du PATH."""
+    bundled = os.path.join(APP_DIR, "ffplay.exe" if os.name == "nt" else "ffplay")
+    return bundled if os.path.exists(bundled) else "ffplay"
+
+
+FFPLAY = os.environ.get("FFPLAY") or _default_ffplay()  # a cote de l'exe, ou PATH, ou $FFPLAY
 SDP_PATH = os.path.join(tempfile.gettempdir(), "dcs8000lh.sdp")
 WS_DEBUG_LOG = os.path.join(tempfile.gettempdir(), "dcs8000lh_ws_debug.log")  # journal debug optionnel
 

@@ -41,20 +41,30 @@ MOTION_END_HOLD = 4.0            # secondes de calme avant de clore un evenement
 NIGHT_SAT = 12                   # saturation moyenne en dessous de laquelle = nuit
 MAX_CAPTURES = 600               # nettoyage : nombre max de snapshots conserves sur disque
 
-HERE = os.path.dirname(os.path.abspath(__file__))
+# HERE = dossier de l'exe quand empaquete (PyInstaller), sinon dossier du script
+# (meme logique que live_view_standalone.APP_DIR, reutilisee pour rester coherent
+# si ce module est un jour execute sans import prealable de live_view_standalone).
+HERE = lv.APP_DIR
 VIDEO_SDP_PATH = os.path.join(HERE, "cam_video.sdp")
 AUDIO_SDP_PATH = os.path.join(HERE, "cam_audio.sdp")
 CONFIG_PATH = os.path.join(HERE, "dashboard_config.json")
 CAPTURES_DIR = os.path.join(HERE, "captures")
 DB_PATH = os.path.join(HERE, "dashboard_events.db")
-if os.environ.get("FFMPEG"):
-    FFMPEG = os.environ["FFMPEG"]
-else:
+
+
+def _default_ffmpeg():
+    """ffmpeg a cote de l'executable (packagee PyInstaller) en priorite,
+    sinon deduit de FFPLAY, sinon celui du PATH."""
+    bundled = os.path.join(HERE, "ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+    if os.path.exists(bundled):
+        return bundled
     _base = os.path.basename(lv.FFPLAY).lower()
     if "ffplay" in _base:
-        FFMPEG = os.path.join(os.path.dirname(lv.FFPLAY), _base.replace("ffplay", "ffmpeg"))
-    else:
-        FFMPEG = "ffmpeg"
+        return os.path.join(os.path.dirname(lv.FFPLAY), _base.replace("ffplay", "ffmpeg"))
+    return "ffmpeg"
+
+
+FFMPEG = os.environ.get("FFMPEG") or _default_ffmpeg()
 
 
 # ---------------- Reglages persistants (sensibilite + zones de detection) ----------------

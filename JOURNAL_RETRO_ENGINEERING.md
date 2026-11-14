@@ -475,6 +475,47 @@ Windows, redémarré seul après une coupure) :
   se termine malgré les retries internes (ex. coupure internet qui dépasse
   les 5 tentatives) — filet de sécurité simple plutôt qu'une vraie
   supervision de service.
+- **Bug `where.exe`** rencontré en testant le lanceur : sur cette machine,
+  `where.exe` (le vrai, `C:\Windows\System32\where.exe`, build 10.0.26100.1)
+  échoue systématiquement dès qu'on lui passe un **chemin complet** en
+  argument (`Erreur : modèle non valide spécifié dans "path:pattern"`),
+  même pour un fichier qui existe bel et bien (reproduit aussi sur
+  `C:\Windows\System32\cmd.exe` lui-même) — il ne fonctionne qu'avec un nom
+  nu recherché dans le `PATH`. Cause non élucidée (pas un souci de notre
+  script). Correctif : ne jamais appeler `where` avec un chemin complet,
+  seulement sur un nom de commande nu (repli sur le `python` du `PATH`).
+
+### Paquet autonome (PyInstaller)
+
+`release_build/` (gitignored) contient le build PyInstaller du dashboard,
+distribué via les Releases GitHub du dépôt, pas via git.
+
+- Build `--onedir` (pas `--onefile`) : un `.exe` onefile se désarchive dans
+  un dossier temporaire à CHAQUE lancement, ce qui l'expose au même genre de
+  nettoyage/heuristique antivirus agressif sur `%TEMP%` qui avait vidé le
+  venv de session plus tôt (voir plus haut) — `--onedir` reste un dossier
+  stable, plus simple à faire confiance pour un antivirus et plus rapide à
+  démarrer.
+- `--hidden-import=_cffi_backend` obligatoire : sans ça, `pylibsrtp` (qui
+  dépend de `cffi`) plante au démarrage de l'exe avec
+  `ModuleNotFoundError: No module named '_cffi_backend'` — PyInstaller ne
+  détecte pas cette extension C chargée dynamiquement par `cffi`.
+- Chemins "frozen-aware" : `live_view_standalone._app_dir()` renvoie
+  `dirname(sys.executable)` quand `sys.frozen` (PyInstaller) au lieu de
+  `dirname(__file__)`. `CONFIG_PATH`, `FFPLAY`/`FFMPEG` (cherchent d'abord un
+  binaire à côté de l'exe) et `dashboard_server.HERE` (→ `dashboard.html`,
+  `captures/`, la base SQLite) en dépendent tous, pour que tout vive dans le
+  même dossier que l'exe packagé (ou le script en mode source — aucune
+  régression constatée dans ce cas).
+- En mode `--onedir`, PyInstaller 6.x range le runtime Python dans un
+  sous-dossier `_internal/` à côté de l'exe — `dashboard.html`/`ffmpeg.exe`
+  sont copiés manuellement À CÔTÉ de l'exe après le build (pas via
+  `--add-data`, qui les aurait mis dans `_internal/`, introuvables par notre
+  détection basée sur `dirname(sys.executable)`).
+- `ffmpeg.exe` seul est embarqué (pas `ffplay.exe`/`ffprobe.exe`, jamais
+  utilisés par `dashboard_server.py`) : ~227 Mo brut, ~117 Mo une fois le zip
+  de release compressé. Licence FFmpeg (GPL, build gyan.dev) copiée dans le
+  zip (`FFMPEG_LICENSE.txt`) avec un lien vers les sources correspondantes.
 
 ## 7. Détails techniques divers utiles
 

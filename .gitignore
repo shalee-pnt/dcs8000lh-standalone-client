@@ -30,6 +30,10 @@ __pycache__/
 venv/
 .venv/
 
+# Build PyInstaller (artefacts volumineux, voir Releases GitHub)
+release_build/
+*.spec
+
 # OS
 Thumbs.db
 .DS_Store
